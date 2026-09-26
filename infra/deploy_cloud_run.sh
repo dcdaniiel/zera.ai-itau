@@ -8,4 +8,4 @@ rsync -a --delete --exclude '__pycache__' dados/ zera_agent/dados/
 adk deploy cloud_run \
   --project="$PROJECT" --region="$REGION" \
   --otel_to_cloud \
-  zera_agent -- --allow-unauthenticated --service-account="" --set-env-vars="GOOGLE_GENAI_USE_ENTERPRISE=1,ZERA_FONTE=csv"
+  zera_agent -- --allow-unauthenticated --service-account="" --set-env-vars="GOOGLE_GENAI_USE_ENTERPRISE=1,ZERA_FONTE=bigquery,ZERA_ESTADO=bigquery"

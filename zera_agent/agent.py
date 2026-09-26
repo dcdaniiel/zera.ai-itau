@@ -28,14 +28,15 @@ from google.genai import types  # noqa: E402
 from zera_agent import guardrails, prompts, tools  # noqa: E402
 
 # Troque pelo Flash mais novo habilitado no projeto (ver Model Garden / quota). Ex.: gemini-3-flash-preview
-MODEL = os.getenv("ZERA_MODEL", "gemini-2.5-flash")
+MODEL = os.getenv("ZERA_MODEL", "gemini-3.8-flash")  # fallback estável: gemini-2.5-flash
 CONFIG = types.GenerateContentConfig(temperature=float(os.getenv("ZERA_TEMPERATURA", "0.2")))
 
+# Arquitetura de guardrails do workshop RAI: entrada (bloqueia) -> modelo -> saída (bloqueia)
 CALLBACKS = dict(
-    before_model_callback=guardrails.antes_do_modelo,
+    before_model_callback=guardrails.guardrail_entrada,
     before_tool_callback=guardrails.exigir_consentimento,
     after_tool_callback=guardrails.registrar_numeros,
-    after_model_callback=guardrails.checar_numeros,
+    after_model_callback=guardrails.guardrail_saida,
 )
 
 

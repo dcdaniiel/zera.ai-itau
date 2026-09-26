@@ -30,10 +30,10 @@ def _runner(roteiro: dict) -> tuple[InMemoryRunner, FakeLlm]:
     llm = FakeLlm(roteiro=roteiro, chamadas=[])
     agente = LlmAgent(
         name="zera", model=llm, instruction=prompts.ROOT, tools=tools.TODAS,
-        before_model_callback=guardrails.antes_do_modelo,
+        before_model_callback=guardrails.guardrail_entrada,
         before_tool_callback=guardrails.exigir_consentimento,
         after_tool_callback=guardrails.registrar_numeros,
-        after_model_callback=guardrails.checar_numeros,
+        after_model_callback=guardrails.guardrail_saida,
     )
     return InMemoryRunner(agent=agente, app_name="zera"), llm
 
@@ -61,7 +61,7 @@ def test_raio_x_e_guardrail_de_numeros():
     }
     runner, llm = _runner(roteiro)
     respostas, estado = asyncio.run(_conversar(runner, ["quanto eu devo?"]))
-    assert "6.800,00" in respostas[-1]
+    assert "6.800,00" in respostas[-1] and "999,99" not in respostas[-1]   # número inventado é substituído
     assert estado["alucinacao_numerica"] == 1          # só o 999,99 é estranho
     assert 6800.0 in estado["ultimos_numeros"] and 14.0 in estado["ultimos_numeros"]
     assert [b["tipo"] for b in estado["ui"]] == ["raio_x", "prioridades"]

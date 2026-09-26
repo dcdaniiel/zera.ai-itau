@@ -130,3 +130,51 @@ def test_nao_cabe_em_48x_escala(perfil):
 def test_numeros_de_inclui_taxas_em_pct():
     ns = numeros_de({"taxa": 0.015, "valor": 10.5, "lista": [3], "numeros_permitidos": [999]})
     assert 1.5 in ns and 0.02 in ns and 10.5 in ns and 3.0 in ns and 999 not in ns
+
+
+# ---------- alocação de dinheiro extra (montar_cenarios) ----------
+
+def test_cenarios_com_dinheiro_extra_quitam_a_mais_cara_e_renegociam_o_resto(perfil, capacidade):
+    from motor import montar_cenarios
+    r = montar_cenarios(perfil, capacidade, valor_extra=2800.0)
+    rec = r["cenarios"][0]
+    assert "recomendado" in rec["rotulos"] and rec["resolve_negativacao"]
+    acoes = {a["divida_id"]: a["acao"] for a in rec["acoes"]}
+    assert acoes["dv_cartao"] == "quitar"                      # a mais cara (14% a.m.) sai à vista com 20% de desconto
+    assert acoes["dv_emprestimo"].startswith("renegociar") and acoes["dv_cheque"].startswith("renegociar")
+    assert rec["comprometimento_mensal"] <= r["parcela_conforto"] <= capacidade.parcela_maxima
+    assert r["perfil_risco"] == "renda_irregular" and r["reserva_minima"] == capacidade.colchao
+    assert rec["usa_caixa"] <= r["caixa_disponivel"]
+    assert {"mais_barato", "mais_folga", "mais_rapido"} <= {rot for c in r["cenarios"] for rot in c["rotulos"]}
+
+
+def test_cenarios_sem_dinheiro_extra_renegociam_tudo_dentro_do_conforto(perfil, capacidade):
+    from motor import montar_cenarios
+    r = montar_cenarios(perfil, capacidade, valor_extra=0.0)
+    rec = r["cenarios"][0]
+    assert all(a["acao"].startswith("renegociar") for a in rec["acoes"])
+    assert rec["comprometimento_mensal"] <= r["parcela_conforto"]
+    assert all(a["prazo"] in (12, 18, 24, 36) for a in rec["acoes"])
+
+
+def test_acordo_de_cenario_com_componentes_e_amortizacao(perfil, capacidade):
+    from motor import amortizar, criar_acordo_de_cenario, montar_cenarios, processar_vencimentos
+    r = montar_cenarios(perfil, capacidade, valor_extra=2800.0)
+    ac = criar_acordo_de_cenario(perfil, r["cenarios"][0], date(2026, 9, 26))
+    assert len(ac.quitacoes) == 1 and len(ac.componentes) == 2 and ac.respiros_max == 2
+    assert ac.parcela == pytest.approx(sum(c["parcela"] for c in ac.componentes))
+    processar_vencimentos(ac, date(2027, 10, 12))          # 12 parcelas: o componente de 12x termina
+    assert [c["status"] for c in ac.componentes] == ["quitado", "ativo"]
+    assert ac.parcela == pytest.approx(ac.componentes[1]["parcela"])   # a parcela cai quando um componente termina
+    sim = amortizar(ac, 500.0, capacidade, perfil, aplicar=True)
+    assert sim["ok"] and sim["divida_alvo"] == "Empréstimo pessoal"
+    processar_vencimentos(ac, date(2030, 1, 1))
+    assert ac.status == "quitado" and ac.saldo_devedor == 0.0
+
+
+def test_nenhum_cenario_cabe(perfil):
+    from motor import montar_cenarios
+    cap = calcular_capacidade(perfil)
+    cap.parcela_maxima = 30.0
+    r = montar_cenarios(perfil, cap, valor_extra=0.0)
+    assert r["nenhum_cenario_cabe"] is True and r["recomendado"] is None

@@ -5,8 +5,9 @@ Schema canônico de transações:
     categoria, essencial (bool), recorrente (bool)
 
 Fontes (env ZERA_FONTE):
-    csv       -> dados/cleide_12m.csv + dados/cleide_dividas.json (padrão; P0)
-    bigquery  -> `{projeto}.{dataset}.{tabela}` via MAPEAMENTO_COLUNAS (P1; ajuste após ver o schema real)
+    csv       -> dados/cleide_12m.csv + dados/cleide_dividas.json (padrão; persona da demo)
+    bigquery  -> 1) `zera.perfil_cliente` + `zera.dividas_derivadas` (agregado, 1 query por sessão — dados/sql/zera_tabelas.sql)
+                 2) fallback: extrato bruto `hackathon_dados.extrato_sintetico` clusterizado por id_usuario + derivar_dividas()
 """
 
 from __future__ import annotations
@@ -25,6 +26,10 @@ AQUI = Path(__file__).parent
 PROJETO = os.getenv("GOOGLE_CLOUD_PROJECT", "batalha-time-03-vhxk")
 DATASET = os.getenv("ZERA_BQ_DATASET", "hackathon_dados")
 TABELA = os.getenv("ZERA_BQ_TABELA", "extrato_sintetico")
+DATASET_ZERA = os.getenv("ZERA_BQ_DATASET_ZERA", "zera")
+
+# taxas fictícias usadas quando a dívida é derivada do extrato (sem cadastro de dívidas na base do evento)
+TAXAS_DERIVADAS = {"cheque_especial": 0.08, "cartao_rotativo": 0.14, "emprestimo": 0.045, "crediario": 0.0}
 
 # Schema real de `hackathon_dados.extrato_sintetico` (visto em 26/09): coluna canônica -> coluna da tabela
 #   id_usuario, anomesdia (TIMESTAMP), anomes (INT), tipo (S = saída, E = entrada), descr, vlr,
@@ -113,6 +118,62 @@ def carregar_bigquery(cliente_id: str, meses: int = 12) -> pd.DataFrame:
     return normalizar(job.result().to_dataframe())
 
 
+def carregar_bigquery_agregado(cliente_id: str) -> tuple[dict | None, list[dict]]:
+    """Caminho rápido: 1 query em `zera.perfil_cliente` (arrays de 12 meses) + dívidas derivadas. None se não existir."""
+    from google.cloud import bigquery
+
+    client = bigquery.Client(project=PROJETO)
+    sql = f"""
+        SELECT p.meses, p.renda_mensal, p.essenciais_mensal, p.parcelas_mensal, p.cv_renda, p.meses_no_vermelho,
+               ARRAY(SELECT AS STRUCT divida_id, produto, saldo, taxa_mensal, dias_atraso, consequencia, descricao
+                     FROM `{PROJETO}.{DATASET_ZERA}.dividas_derivadas` d WHERE d.id_usuario = p.id_usuario) AS dividas
+        FROM `{PROJETO}.{DATASET_ZERA}.perfil_cliente` p
+        WHERE p.id_usuario = @cliente_id
+    """
+    job = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("cliente_id", "STRING", cliente_id)]))
+    for row in job.result():
+        perfil = {"meses": list(row["meses"]), "renda_mensal": [float(x) for x in row["renda_mensal"]],
+                  "essenciais_mensal": [float(x) for x in row["essenciais_mensal"]],
+                  "parcelas_mensal": [float(x) for x in row["parcelas_mensal"]]}
+        dividas = [dict(d) for d in row["dividas"]]
+        return perfil, dividas
+    return None, []
+
+
+def derivar_dividas(df: pd.DataFrame, cliente_id: str) -> list[dict]:
+    """Infere dívidas do extrato bruto (mesmas regras de dados/sql/zera_tabelas.sql), para ids reais sem cadastro."""
+    d = df[df["cliente_id"].astype(str) == str(cliente_id)]
+    if d.empty:
+        return []
+    ultimo = d["mes"].max()
+    u = d[d["mes"] == ultimo]
+    dividas: list[dict] = []
+    if "saldo_apos" in u.columns and (u["saldo_apos"] < 0).any():
+        dividas.append({"divida_id": "dv_cheque_especial", "produto": "cheque_especial", "saldo": r2(-u["saldo_apos"].min()),
+                        "taxa_mensal": TAXAS_DERIVADAS["cheque_especial"], "dias_atraso": 0, "consequencia": "nenhuma",
+                        "descricao": "saldo negativo no último mês"})
+    if "parcela_total" in u.columns:
+        pr = u[u["parcela_total"].notna()]
+        if not pr.empty:
+            saldo = (pr["valor"] * (pr["parcela_total"] - pr["parcela_atual"].fillna(1) + 1)).sum()
+            dividas.append({"divida_id": "dv_crediario", "produto": "crediario", "saldo": r2(saldo),
+                            "taxa_mensal": TAXAS_DERIVADAS["crediario"], "dias_atraso": 0, "consequencia": "nenhuma",
+                            "descricao": f"{len(pr)} parcelamentos ativos"})
+    desc = u["descricao"].astype(str).str.lower()
+    cartao = u[desc.str.contains(r"minimo|mínimo|rotativo|juros cart|encargo", regex=True)]
+    if not cartao.empty:
+        dividas.append({"divida_id": "dv_cartao_rotativo", "produto": "cartao_rotativo", "saldo": r2(cartao["valor"].sum() * 6),
+                        "taxa_mensal": TAXAS_DERIVADAS["cartao_rotativo"], "dias_atraso": 60, "consequencia": "negativacao",
+                        "descricao": "pagamento mínimo/rotativo detectado"})
+    emp = u[desc.str.contains(r"emprest|emprést|financ|consign", regex=True)]
+    if not emp.empty:
+        dividas.append({"divida_id": "dv_emprestimo", "produto": "emprestimo", "saldo": r2(emp["valor"].sum() * 8),
+                        "taxa_mensal": TAXAS_DERIVADAS["emprestimo"], "dias_atraso": 0, "consequencia": "negativacao",
+                        "descricao": "parcela de empréstimo detectada"})
+    return dividas
+
+
 def carregar_dividas_json(path: Path | None = None) -> dict:
     return json.loads((path or AQUI / "cleide_dividas.json").read_text(encoding="utf-8"))
 
@@ -141,12 +202,27 @@ def perfil_de_transacoes(cliente_id: str, nome: str, df: pd.DataFrame, dividas: 
 
 
 def carregar_perfil(cliente_id: str = "cli_001") -> tuple[PerfilFinanceiro, pd.DataFrame]:
+    """Fonte por env ZERA_FONTE: csv (persona sintética) | bigquery (agregado zera.perfil_cliente; cai para o extrato bruto)."""
     fonte = os.getenv("ZERA_FONTE", "csv")
     meta = carregar_dividas_json()
-    if fonte == "bigquery":
+    if fonte == "bigquery" and cliente_id != meta.get("cliente_id"):
+        agregado, dividas = carregar_bigquery_agregado(cliente_id)
+        if agregado:
+            n = len(agregado["meses"])
+            perfil = PerfilFinanceiro(
+                cliente_id=cliente_id, nome=f"Cliente {cliente_id[:8]}", meses=agregado["meses"],
+                renda_mensal=[r2(x) for x in agregado["renda_mensal"]],
+                essenciais_mensal=[r2(x) for x in agregado["essenciais_mensal"]],
+                compromissos_mensal=[0.0] * n,
+                dividas=[Divida(**{k: v for k, v in d.items() if k in Divida.__dataclass_fields__}) for d in dividas],
+                tem_reserva=False, dia_pagamento_preferido=10,
+            )
+            return perfil, pd.DataFrame()
         df = carregar_bigquery(cliente_id)
-    else:
-        df = carregar_csv()
+        dividas = derivar_dividas(df, cliente_id)
+        perfil = perfil_de_transacoes(cliente_id, f"Cliente {cliente_id[:8]}", df, dividas)
+        return perfil, df
+    df = carregar_csv()
     perfil = perfil_de_transacoes(cliente_id, meta.get("nome", cliente_id), df, meta["dividas"],
                                   tem_reserva=meta.get("tem_reserva", False),
                                   dia_pagamento=meta.get("dia_pagamento_preferido", 10))

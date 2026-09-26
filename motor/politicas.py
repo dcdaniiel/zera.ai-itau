@@ -1,7 +1,7 @@
 """Parâmetros de negócio do Zera.
 
 Tudo que é "alavanca" de experimentação vive aqui e pode ser sobrescrito por
-um documento `politicas/renegociacao` no Firestore (P1). Valores fictícios
+uma linha em `zera.politicas` no BigQuery (P1). Valores fictícios
 para o hackathon — nunca use como política real do banco.
 """
 
@@ -27,6 +27,10 @@ POLITICA_PADRAO: dict = {
         {"de": 91,  "ate": 180,    "avista": 0.35, "parcelado": 0.15},
         {"de": 181, "ate": 10**9,  "avista": 0.50, "parcelado": 0.25},
     ],
+    "prazos_oferecidos": [12, 18, 24, 36],   # "braços" de renegociação por dívida
+    "horizonte_manter_meses": 12,   # custo de "manter" uma dívida em dia = juros por 12 meses
+    "cv_renda_irregular": 0.12,     # coeficiente de variação da renda a partir do qual o perfil é "renda irregular"
+    "fator_conforto_renda_irregular": 0.70,  # parcela de conforto = 70% da parcela máxima para renda irregular
     "desconto_amortizacao": 0.15,   # cada R$ 1 amortizado abate R$ 1/(1-0,15)
     "reserva_meses_colchao": 3,     # reserva sugerida = min(3 colchões, 30% do extra)
     "reserva_pct_extra": 0.30,
@@ -42,7 +46,7 @@ POLITICA_PADRAO: dict = {
 
 
 def carregar_politica(sobrescritas: dict | None = None) -> dict:
-    """Retorna a política padrão com sobrescritas (ex.: vindas do Firestore)."""
+    """Retorna a política padrão com sobrescritas (ex.: vindas do BigQuery)."""
     politica = deepcopy(POLITICA_PADRAO)
     if sobrescritas:
         politica.update(sobrescritas)

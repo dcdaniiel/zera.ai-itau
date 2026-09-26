@@ -7,7 +7,6 @@ REGION="${GOOGLE_CLOUD_LOCATION:-us-central1}"
 cat > zera_agent/requirements.txt <<REQ
 google-adk
 google-cloud-aiplatform[agent_engines]
-google-cloud-firestore
 google-cloud-bigquery
 db-dtypes
 pandas

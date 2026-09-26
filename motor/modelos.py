@@ -143,10 +143,17 @@ class Acordo:
     criado_em: str = ""
     proximo_vencimento: str = ""  # ISO date
     historico: list[dict] = field(default_factory=list)
+    # cenário por dívida: cada componente é uma renegociação (parcela/prazo próprios); quitações ficam registradas
+    componentes: list[dict] = field(default_factory=list)
+    quitacoes: list[dict] = field(default_factory=list)
 
     @property
     def restantes(self) -> int:
         return max(0, self.prazo - self.pagas)
+
+    @property
+    def componentes_ativos(self) -> list[dict]:
+        return [c for c in self.componentes if c.get("status", "ativo") == "ativo"]
 
     def to_dict(self) -> dict:
         d = asdict(self)

@@ -206,11 +206,78 @@ def criar_acordo(perfil: PerfilFinanceiro, plano: dict, hoje: date, politica: di
     )
 
 
+def criar_acordo_de_cenario(perfil: PerfilFinanceiro, cenario: dict, hoje: date, politica: dict | None = None) -> Acordo:
+    """Acordo a partir de um cenário por dívida (motor/alocacao.py): quitações + um componente por renegociação."""
+    pol = politica or POLITICA_PADRAO
+    if cenario.get("dividas_nao_resolvidas") and not cenario.get("resolve_negativacao", True):
+        pass  # permitido, mas o agente deve avisar
+    componentes, quitacoes = [], []
+    for acao in cenario["acoes"]:
+        if acao["acao"] == "quitar":
+            quitacoes.append({"divida_id": acao["divida_id"], "nome": acao["nome"], "valor_pago": acao["usa_caixa"],
+                              "desconto_valor": acao["desconto_valor"], "data": hoje.isoformat()})
+        elif acao["acao"].startswith("renegociar"):
+            componentes.append({"divida_id": acao["divida_id"], "nome": acao["nome"], "saldo_base": acao["saldo_base"],
+                                "saldo_devedor": acao["saldo_base"], "parcela": acao["parcela"], "prazo": acao["prazo"],
+                                "pagas": 0, "taxa_mensal": acao["taxa_mensal"], "status": "ativo"})
+        # "manter" não entra no acordo
+    if not componentes and not quitacoes:
+        raise ValueError("cenário sem ações")
+    venc = proximo_vencimento(hoje, perfil.dia_pagamento_preferido or pol["dia_vencimento_padrao"])
+    parcela = r2(sum(c["parcela"] for c in componentes))
+    prazo = max((c["prazo"] for c in componentes), default=0)
+    saldo = r2(sum(c["saldo_base"] for c in componentes))
+    acordo = Acordo(
+        acordo_id=f"ac_{uuid4().hex[:8]}", cliente_id=perfil.cliente_id, plano_id=cenario.get("id", "CENARIO"),
+        parcela=parcela, prazo=prazo, taxa_mensal=pol["taxa_mensal_renegociacao"],
+        saldo_inicial=saldo, saldo_devedor=saldo, status="ativo" if componentes else "quitado",
+        respiros_max=cenario.get("respiros", 0), criado_em=hoje.isoformat(),
+        proximo_vencimento=venc.isoformat() if componentes else "",
+        historico=[{"data": hoje.isoformat(), "evento": "acordo_fechado", "cenario": cenario.get("id"),
+                    "resumo": cenario.get("resumo", "")}],
+        componentes=componentes, quitacoes=quitacoes,
+    )
+    for q in quitacoes:
+        acordo.historico.append({"data": hoje.isoformat(), "evento": "divida_quitada", **q})
+    return acordo
+
+
+def _sincronizar(acordo: Acordo) -> None:
+    """Recalcula parcela/prazo/saldo do acordo a partir dos componentes ativos."""
+    if not acordo.componentes:
+        return
+    ativos = acordo.componentes_ativos
+    acordo.parcela = r2(sum(c["parcela"] for c in ativos))
+    acordo.saldo_devedor = r2(sum(c["saldo_devedor"] for c in ativos))
+    acordo.prazo = max((c["prazo"] for c in acordo.componentes), default=0)
+    if not ativos:
+        acordo.saldo_devedor = 0.0
+        acordo.status = "quitado"
+
+
 def registrar_pagamento(acordo: Acordo, data: date | None = None) -> Acordo:
     if acordo.status != "ativo":
         return acordo
     venc = date.fromisoformat(acordo.proximo_vencimento)
     data = data or venc
+    if acordo.componentes:
+        pago = 0.0
+        for c in acordo.componentes_ativos:
+            c["saldo_devedor"] = r2(c["saldo_devedor"] * (1 + c["taxa_mensal"]) - c["parcela"])
+            c["pagas"] += 1
+            pago += c["parcela"]
+            if c["pagas"] >= c["prazo"] or c["saldo_devedor"] <= 0.5:
+                c["saldo_devedor"] = 0.0
+                c["status"] = "quitado"
+                acordo.historico.append({"data": data.isoformat(), "evento": "componente_quitado", "divida_id": c["divida_id"]})
+        acordo.pagas += 1
+        acordo.historico.append({"data": data.isoformat(), "evento": "parcela_paga", "n": acordo.pagas, "valor": r2(pago)})
+        _sincronizar(acordo)
+        if acordo.status == "quitado":
+            acordo.historico.append({"data": data.isoformat(), "evento": "quitado"})
+        else:
+            acordo.proximo_vencimento = _mes_seguinte(venc).isoformat()
+        return acordo
     if acordo.plano_id == "A":
         acordo.saldo_devedor = 0.0
     else:
@@ -262,13 +329,18 @@ def amortizar(acordo: Acordo, valor: float, capacidade: Capacidade, perfil: Perf
         reserva = r2(min(capacidade.colchao * pol["reserva_meses_colchao"], valor * pol["reserva_pct_extra"]))
     valor_amortizado = r2(valor - reserva)
     desc = pol["desconto_amortizacao"]
-    abatimento = r2(min(valor_amortizado / (1 - desc), acordo.saldo_devedor))
-    novo_saldo = r2(max(0.0, acordo.saldo_devedor - abatimento))
-    prazo_antes = acordo.restantes
+    # alvo: o componente com maior saldo devedor (o que mais pesa); sem componentes, o acordo inteiro
+    alvo = max(acordo.componentes_ativos, key=lambda c: c["saldo_devedor"]) if acordo.componentes else None
+    saldo_alvo = alvo["saldo_devedor"] if alvo else acordo.saldo_devedor
+    parcela_alvo = alvo["parcela"] if alvo else acordo.parcela
+    taxa_alvo = alvo["taxa_mensal"] if alvo else acordo.taxa_mensal
+    abatimento = r2(min(valor_amortizado / (1 - desc), saldo_alvo))
+    novo_saldo = r2(max(0.0, saldo_alvo - abatimento))
+    prazo_antes = (alvo["prazo"] - alvo["pagas"]) if alvo else acordo.restantes
     if novo_saldo <= 0.5:
         novo_restante = 0
     else:
-        novo_restante = prazo_para_parcela(novo_saldo, acordo.taxa_mensal, acordo.parcela, pol["prazo_max"]) or prazo_antes
+        novo_restante = prazo_para_parcela(novo_saldo, taxa_alvo, parcela_alvo, pol["prazo_max"]) or prazo_antes
     resultado = {
         "ok": True,
         "valor_recebido": r2(valor),
@@ -276,12 +348,13 @@ def amortizar(acordo: Acordo, valor: float, capacidade: Capacidade, perfil: Perf
         "valor_amortizado": valor_amortizado,
         "desconto_pct": desc,
         "abatimento_no_saldo": abatimento,
-        "saldo_antes": acordo.saldo_devedor,
+        "divida_alvo": alvo["nome"] if alvo else "acordo",
+        "saldo_antes": saldo_alvo,
         "saldo_depois": novo_saldo,
         "parcelas_restantes_antes": prazo_antes,
         "parcelas_restantes_depois": novo_restante,
         "parcelas_a_menos": max(0, prazo_antes - novo_restante),
-        "parcela": acordo.parcela,
+        "parcela": parcela_alvo,
         "quita": novo_restante == 0,
         "explicacao": (
             f"Cada 1 real amortizado abate {1/(1-desc):.2f} do saldo. "
@@ -289,11 +362,20 @@ def amortizar(acordo: Acordo, valor: float, capacidade: Capacidade, perfil: Perf
         ),
     }
     if aplicar:
-        acordo.saldo_devedor = novo_saldo
-        acordo.prazo = acordo.pagas + novo_restante
-        acordo.historico.append({"data": acordo.proximo_vencimento, "evento": "amortizacao", "valor": valor_amortizado, "abatimento": abatimento})
-        if novo_restante == 0:
-            acordo.status = "quitado"
+        if alvo:
+            alvo["saldo_devedor"] = novo_saldo
+            alvo["prazo"] = alvo["pagas"] + novo_restante
+            if novo_restante == 0:
+                alvo["status"] = "quitado"
+            _sincronizar(acordo)
+        else:
+            acordo.saldo_devedor = novo_saldo
+            acordo.prazo = acordo.pagas + novo_restante
+            if novo_restante == 0:
+                acordo.status = "quitado"
+        acordo.historico.append({"data": acordo.proximo_vencimento, "evento": "amortizacao", "valor": valor_amortizado,
+                                 "abatimento": abatimento, "divida": resultado["divida_alvo"]})
+        if acordo.status == "quitado":
             acordo.historico.append({"data": acordo.proximo_vencimento, "evento": "quitado"})
     resultado["numeros_permitidos"] = numeros_de(resultado)
     return resultado

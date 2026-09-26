@@ -1,4 +1,4 @@
-"""Estado do cliente + relógio de simulação (P0: JSON local; P1: Firestore).
+"""Estado do cliente + relógio de simulação (P0: JSON local; P1: BigQuery append-only — Firestore não está liberado).
 
 O agente nunca toca o extrato bruto: ele só vê o que as tools devolvem a partir deste contexto.
 """
@@ -11,6 +11,7 @@ from dataclasses import asdict
 from datetime import date
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from dados.loader import carregar_perfil
 from motor import (
@@ -23,8 +24,11 @@ from motor import (
 from motor.modelos import PerfilFinanceiro
 
 RAIZ = Path(__file__).resolve().parent.parent
-PASTA_ESTADO = Path(os.getenv("ZERA_ESTADO_DIR", RAIZ / ".zera_state"))
 HOJE_INICIAL = os.getenv("ZERA_HOJE", "2026-09-26")
+
+
+def pasta_estado() -> Path:
+    return Path(os.getenv("ZERA_ESTADO_DIR", RAIZ / ".zera_state"))
 
 # Roteiro da demo: eventos que o "avançar tempo" injeta (dinheiro extra etc.)
 ROTEIRO_DEMO: list[dict] = [
@@ -35,8 +39,8 @@ ROTEIRO_DEMO: list[dict] = [
 # ---------- persistência ----------
 
 class RepositorioJson:
-    def __init__(self, pasta: Path = PASTA_ESTADO):
-        self.pasta = pasta
+    def __init__(self, pasta: Path | None = None):
+        self.pasta = pasta or pasta_estado()
         self.pasta.mkdir(parents=True, exist_ok=True)
 
     def ler(self, cliente_id: str) -> dict | None:
@@ -52,30 +56,58 @@ class RepositorioJson:
             p.unlink()
 
 
-class RepositorioFirestore:
-    """P1: mesmo contrato, documento `clientes/{cliente_id}/estado/atual`."""
+class RepositorioBigQuery:
+    """Estado do cliente em BigQuery, append-only (Firestore não está liberado no projeto do evento).
+
+    Tabela `zera.estado_cliente`: um snapshot JSON por gravação; leitura = último snapshot do cliente.
+    "Apagar" (LGPD) grava um snapshot com apagado=true. Eventos vão para `zera.eventos` (streaming insert).
+    """
 
     def __init__(self):
-        from google.cloud import firestore  # import tardio
+        from google.cloud import bigquery  # import tardio
 
-        self.db = firestore.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT"))
-
-    def _doc(self, cliente_id: str):
-        return self.db.collection("clientes").document(cliente_id).collection("estado").document("atual")
+        self.bq = bigquery
+        self.projeto = os.getenv("GOOGLE_CLOUD_PROJECT", "batalha-time-03-vhxk")
+        self.dataset = os.getenv("ZERA_BQ_DATASET_ZERA", "zera")
+        self.client = bigquery.Client(project=self.projeto)
+        self.t_estado = f"{self.projeto}.{self.dataset}.estado_cliente"
+        self.t_eventos = f"{self.projeto}.{self.dataset}.eventos"
 
     def ler(self, cliente_id: str) -> dict | None:
-        snap = self._doc(cliente_id).get()
-        return snap.to_dict() if snap.exists else None
+        sql = f"SELECT apagado, estado FROM `{self.t_estado}` WHERE cliente_id = @id ORDER BY gravado_em DESC LIMIT 1"
+        job = self.client.query(sql, job_config=self.bq.QueryJobConfig(
+            query_parameters=[self.bq.ScalarQueryParameter("id", "STRING", cliente_id)]))
+        for row in job.result():
+            return None if row["apagado"] else json.loads(row["estado"])
+        return None
 
     def gravar(self, cliente_id: str, estado: dict) -> None:
-        self._doc(cliente_id).set(estado)
+        self._inserir(self.t_estado, [{"cliente_id": cliente_id, "gravado_em": _agora(), "apagado": False,
+                                       "estado": json.dumps(estado, ensure_ascii=False, default=str)}])
 
     def apagar(self, cliente_id: str) -> None:
-        self._doc(cliente_id).delete()
+        self._inserir(self.t_estado, [{"cliente_id": cliente_id, "gravado_em": _agora(), "apagado": True, "estado": "{}"}])
+
+    def gravar_evento(self, cliente_id: str, tipo: str, payload: dict, data_simulada: str) -> None:
+        self._inserir(self.t_eventos, [{"evento_id": uuid4().hex, "cliente_id": cliente_id, "sessao_id": os.getenv("ZERA_SESSAO", "demo"),
+                                        "tipo": tipo, "payload": json.dumps(payload, ensure_ascii=False, default=str),
+                                        "variante_experimento": os.getenv("ZERA_VARIANTE", "A"),
+                                        "data_simulada": data_simulada, "timestamp": _agora()}])
+
+    def _inserir(self, tabela: str, linhas: list[dict]) -> None:
+        erros = self.client.insert_rows_json(tabela, linhas)
+        if erros:
+            raise RuntimeError(f"BigQuery insert falhou: {erros}")
+
+
+def _agora() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
 
 
 def repositorio():
-    return RepositorioFirestore() if os.getenv("ZERA_FIRESTORE") == "1" else RepositorioJson()
+    return RepositorioBigQuery() if os.getenv("ZERA_ESTADO", "json") == "bigquery" else RepositorioJson()
 
 
 # ---------- contexto ----------
@@ -133,7 +165,14 @@ class Contexto:
 
     def registrar_evento(self, tipo: str, payload: dict | None = None) -> None:
         self.estado["eventos"].append({"data": self.estado["hoje"], "tipo": tipo, "payload": payload or {}})
+        self.estado["eventos"] = self.estado["eventos"][-200:]
         self.salvar()
+        gravar_evento = getattr(self.repo, "gravar_evento", None)
+        if gravar_evento:
+            try:
+                gravar_evento(self.cliente_id, tipo, payload or {}, self.estado["hoje"])
+            except Exception:  # métrica é best-effort; nunca derruba a conversa
+                pass
 
     def resetar(self) -> None:
         self.repo.apagar(self.cliente_id)

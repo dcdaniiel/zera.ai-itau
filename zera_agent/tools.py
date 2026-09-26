@@ -18,6 +18,8 @@ from motor import (
     acionar_respiro as _acionar_respiro,
     amortizar as _amortizar,
     criar_acordo,
+    criar_acordo_de_cenario,
+    montar_cenarios as _montar_cenarios,
     numeros_de,
     priorizar_dividas as _priorizar,
     simular_planos as _simular,
@@ -100,6 +102,19 @@ def simular_planos(tool_context: ToolContext, dinheiro_extra: float = 0.0) -> di
     return resposta
 
 
+def montar_cenarios(tool_context: ToolContext, valor_extra: float = 0.0) -> dict:
+    """PRINCIPAL: dado o dinheiro extra disponível (FGTS, 13º, restituição, renda extra — ou 0), monta os cenários
+    por dívida: qual quitar à vista com desconto, qual renegociar em 12x/18x/24x/36x e qual manter, respeitando
+    a parcela máxima, a parcela de conforto do perfil (renda irregular) e os respiros. Devolve o recomendado
+    (mais barato dentro do conforto que tira o cliente da negativação) e alternativas: mais_barato, mais_folga, mais_rapido."""
+    c = _ctx(tool_context)
+    resposta = _montar_cenarios(c.perfil, c.capacidade, valor_extra=valor_extra, politica=c.politica)
+    tool_context.state["cenarios"] = {cen["id"]: cen for cen in resposta.get("cenarios", [])}
+    _ui(tool_context, "cenarios", resposta)
+    c.registrar_evento("cenarios_propostos", {"valor_extra": valor_extra, "recomendado": resposta.get("recomendado")})
+    return resposta
+
+
 def comparar_com_padrao(tool_context: ToolContext, plano_id: str) -> dict:
     """Compara um plano (A, B ou C) com a renegociação padrão de 12x e com a situação de hoje."""
     c = _ctx(tool_context)
@@ -166,17 +181,35 @@ def revogar_consentimento(tool_context: ToolContext) -> dict:
 # ---------- Acompanhamento ----------
 
 def fechar_acordo(tool_context: ToolContext, plano_id: str) -> dict:
-    """Fecha o acordo escolhido (A, B ou C). Exige consentimento registrado para 'fechar_acordo'."""
+    """Fecha o acordo escolhido: um cenário de montar_cenarios (C1, C2, ...) ou um plano consolidado (A, B, C).
+    Exige consentimento registrado para 'fechar_acordo'."""
     c = _ctx(tool_context)
+    pid = plano_id.strip().upper()
+    cenarios = tool_context.state.get("cenarios") or {}
+    if pid in cenarios:
+        cen = cenarios[pid]
+        acordo = criar_acordo_de_cenario(c.perfil, cen, c.hoje, c.politica)
+        c.salvar(acordo)
+        c.registrar_evento("acordo_fechado", {"cenario": pid, "parcela": acordo.parcela, "prazo": acordo.prazo,
+                                              "quitacoes": [q["nome"] for q in acordo.quitacoes]})
+        quit_txt = "; ".join(f"{q['nome']} quitado por {q['valor_pago']:.2f}" for q in acordo.quitacoes) or "nenhuma quitação"
+        comp_txt = "; ".join(f"{k['nome']} em {k['prazo']}x de {k['parcela']:.2f}" for k in acordo.componentes) or "nenhuma parcela"
+        resposta = {"ok": True, **acordo.to_dict(),
+                    "explicacao": f"Acordo fechado. Quitações: {quit_txt}. Parcelas: {comp_txt}. Total por mês: {acordo.parcela:.2f}"
+                                  f"{', primeira em ' + acordo.proximo_vencimento if acordo.proximo_vencimento else ''}, "
+                                  f"com {acordo.respiros_max} respiro(s) por ano. Todas as dívidas do acordo saem do atraso."}
+        resposta["numeros_permitidos"] = numeros_de(resposta)
+        _ui(tool_context, "acordo", resposta)
+        return resposta
     planos = tool_context.state.get("planos") or {p["id"]: p for p in _simular(c.perfil, c.capacidade, c.politica)["planos"]}
-    plano = planos.get(plano_id.upper())
+    plano = planos.get(pid)
     if not plano:
-        return {"ok": False, "erro": f"plano {plano_id} não existe"}
+        return {"ok": False, "erro": f"plano/cenário {plano_id} não existe; chame montar_cenarios primeiro"}
     if not plano["cabe"]:
         return {"ok": False, "erro": "esse plano não cabe na sobra do cliente", "motivo": plano["motivo"]}
     acordo = criar_acordo(c.perfil, plano, c.hoje, c.politica)
     c.salvar(acordo)
-    c.registrar_evento("acordo_fechado", {"plano": plano_id.upper(), "parcela": acordo.parcela, "prazo": acordo.prazo})
+    c.registrar_evento("acordo_fechado", {"plano": pid, "parcela": acordo.parcela, "prazo": acordo.prazo})
     resposta = {"ok": True, **acordo.to_dict(),
                 "explicacao": f"Acordo ativo: {acordo.prazo} parcelas de {acordo.parcela:.2f}, primeira em {acordo.proximo_vencimento}, "
                               f"com {acordo.respiros_max} respiro(s) por ano."}
@@ -247,7 +280,7 @@ def escalar_humano(tool_context: ToolContext, motivo: str) -> dict:
 
 
 TOOLS_DIAGNOSTICO = [get_perfil_financeiro, calcular_capacidade, priorizar_dividas]
-TOOLS_NEGOCIADOR = [simular_planos, comparar_com_padrao]
+TOOLS_NEGOCIADOR = [montar_cenarios, simular_planos, comparar_com_padrao]
 TOOLS_ACOMPANHAMENTO = [fechar_acordo, status_acordo, acionar_respiro, amortizar, listar_gatilhos]
 TOOLS_ROOT = [registrar_consentimento, revogar_consentimento, escalar_humano]
 TODAS = TOOLS_DIAGNOSTICO + TOOLS_NEGOCIADOR + TOOLS_ACOMPANHAMENTO + TOOLS_ROOT

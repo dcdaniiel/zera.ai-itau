@@ -1,0 +1,93 @@
+{
+  // Zera — configurações de execução local (VS Code / Cursor / Antigravity)
+  // Pré-requisitos: `uv sync`, `cp zera_agent/.env.example zera_agent/.env`, `gcloud auth application-default login`
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Zera: adk web (UI de dev)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "google.adk.cli",
+      "args": ["web", "--port", "8000", "."],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/zera_agent/.env",
+      "env": { "PYTHONPATH": "${workspaceFolder}" },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Zera: API (uvicorn :8080)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["api.main:app", "--reload", "--port", "8080"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/zera_agent/.env",
+      "env": { "PYTHONPATH": "${workspaceFolder}" },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Zera: testes (pytest)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-q", "tests"],
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder}", "GOOGLE_GENAI_USE_ENTERPRISE": "1", "ZERA_ESTADO_DIR": "${workspaceFolder}/.zera_state_test" },
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Zera: avançar tempo (demo)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "dados.simular_tempo",
+      "args": ["--cliente", "cli_001", "--ate", "${input:dataAte}"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/zera_agent/.env",
+      "env": { "PYTHONPATH": "${workspaceFolder}" },
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Zera: resetar demo (estado do cliente)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "dados.simular_tempo",
+      "args": ["--cliente", "cli_001", "--reset"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/zera_agent/.env",
+      "env": { "PYTHONPATH": "${workspaceFolder}" },
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Zera: gerar dados da Cleide",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "dados.gerar_cleide",
+      "cwd": "${workspaceFolder}",
+      "env": { "PYTHONPATH": "${workspaceFolder}" },
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Zera: perfil real do BigQuery (QA)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "dados.bq_perfil",
+      "args": ["--cliente", "${input:clienteId}", "--extra", "2800"],
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/zera_agent/.env",
+      "env": { "PYTHONPATH": "${workspaceFolder}", "ZERA_FONTE": "bigquery" },
+      "console": "integratedTerminal"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Zera: API + adk web",
+      "configurations": ["Zera: API (uvicorn :8080)", "Zera: adk web (UI de dev)"]
+    }
+  ],
+  "inputs": [
+    { "id": "dataAte", "type": "promptString", "description": "Avançar o relógio da demo até (YYYY-MM-DD)", "default": "2027-01-07" },
+    { "id": "clienteId", "type": "promptString", "description": "id_usuario no BigQuery (ou cli_001)", "default": "2e85f8ba-452e-4dff-bbfc-f3cdce456263" }
+  ]
+}
