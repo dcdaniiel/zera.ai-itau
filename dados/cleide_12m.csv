@@ -1,0 +1,316 @@
+cliente_id,data,descricao,valor,tipo,categoria,essencial,recorrente
+cli_001,2025-10-01,PIX RECEBIDO DIARIA,180.02,credito,renda,False,True
+cli_001,2025-10-01,FARMACIA POPULAR,54.3,debito,outros,False,False
+cli_001,2025-10-02,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2025-10-03,SUPERMERCADO DIA,120.0,debito,alimentacao,True,True
+cli_001,2025-10-05,ALUGUEL PIX IMOBILIARIA,700.0,debito,moradia,True,True
+cli_001,2025-10-07,PIX RECEBIDO DIARIA,238.09,credito,renda,False,True
+cli_001,2025-10-08,PIX RECEBIDO DIARIA,226.05,credito,renda,False,True
+cli_001,2025-10-08,CLARO PRE,50.0,debito,telefone,True,True
+cli_001,2025-10-10,SUPERMERCADO DIA,115.0,debito,alimentacao,True,True
+cli_001,2025-10-11,LOJAS AMERICANAS,26.08,debito,outros,False,False
+cli_001,2025-10-12,ENEL ENERGIA,110.0,debito,contas,True,True
+cli_001,2025-10-14,SABESP,50.0,debito,contas,True,True
+cli_001,2025-10-15,PARCELA EMPRESTIMO PESSOAL 07/15,380.0,debito,divida,False,True
+cli_001,2025-10-16,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2025-10-17,PIX RECEBIDO DIARIA,345.27,credito,renda,False,True
+cli_001,2025-10-17,ACOUGUE SAO JOSE,95.0,debito,alimentacao,True,True
+cli_001,2025-10-18,PIX RECEBIDO DIARIA,331.39,credito,renda,False,True
+cli_001,2025-10-18,IFOOD,29.46,debito,outros,False,False
+cli_001,2025-10-19,LOJAS AMERICANAS,60.09,debito,outros,False,False
+cli_001,2025-10-20,PIX RECEBIDO DIARIA,381.44,credito,renda,False,True
+cli_001,2025-10-20,GAS BOTIJAO,30.0,debito,contas,True,True
+cli_001,2025-10-21,PIX RECEBIDO DIARIA,194.4,credito,renda,False,True
+cli_001,2025-10-23,PIX RECEBIDO DIARIA,272.21,credito,renda,False,True
+cli_001,2025-10-24,SUPERMERCADO DIA,130.0,debito,alimentacao,True,True
+cli_001,2025-10-28,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2025-10-31,PIX RECEBIDO DIARIA,181.13,credito,renda,False,True
+cli_001,2025-11-02,PIX RECEBIDO DIARIA,183.33,credito,renda,False,True
+cli_001,2025-11-02,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2025-11-03,PIX RECEBIDO DIARIA,243.07,credito,renda,False,True
+cli_001,2025-11-03,SUPERMERCADO DIA,120.0,debito,alimentacao,True,True
+cli_001,2025-11-05,ALUGUEL PIX IMOBILIARIA,700.0,debito,moradia,True,True
+cli_001,2025-11-07,PIX RECEBIDO DIARIA,238.56,credito,renda,False,True
+cli_001,2025-11-08,PIX RECEBIDO DIARIA,235.33,credito,renda,False,True
+cli_001,2025-11-08,CLARO PRE,50.0,debito,telefone,True,True
+cli_001,2025-11-10,PIX RECEBIDO DIARIA,218.24,credito,renda,False,True
+cli_001,2025-11-10,SUPERMERCADO DIA,115.0,debito,alimentacao,True,True
+cli_001,2025-11-12,PIX RECEBIDO DIARIA,170.68,credito,renda,False,True
+cli_001,2025-11-12,ENEL ENERGIA,110.0,debito,contas,True,True
+cli_001,2025-11-13,LOJAS AMERICANAS,41.58,debito,outros,False,False
+cli_001,2025-11-14,SABESP,50.0,debito,contas,True,True
+cli_001,2025-11-15,PARCELA EMPRESTIMO PESSOAL 07/15,380.0,debito,divida,False,True
+cli_001,2025-11-16,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2025-11-17,ACOUGUE SAO JOSE,95.0,debito,alimentacao,True,True
+cli_001,2025-11-19,PIX RECEBIDO DIARIA,260.17,credito,renda,False,True
+cli_001,2025-11-20,PIX RECEBIDO DIARIA,188.19,credito,renda,False,True
+cli_001,2025-11-20,GAS BOTIJAO,30.0,debito,contas,True,True
+cli_001,2025-11-21,PIX RECEBIDO DIARIA,359.74,credito,renda,False,True
+cli_001,2025-11-23,PIX RECEBIDO DIARIA,178.29,credito,renda,False,True
+cli_001,2025-11-24,SUPERMERCADO DIA,130.0,debito,alimentacao,True,True
+cli_001,2025-11-28,PIX RECEBIDO DIARIA,224.4,credito,renda,False,True
+cli_001,2025-11-28,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2025-11-28,FARMACIA POPULAR,63.06,debito,outros,False,False
+cli_001,2025-12-02,PIX RECEBIDO DIARIA,188.96,credito,renda,False,True
+cli_001,2025-12-02,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2025-12-03,SUPERMERCADO DIA,120.0,debito,alimentacao,True,True
+cli_001,2025-12-05,ALUGUEL PIX IMOBILIARIA,700.0,debito,moradia,True,True
+cli_001,2025-12-08,PIX RECEBIDO DIARIA,228.83,credito,renda,False,True
+cli_001,2025-12-08,CLARO PRE,50.0,debito,telefone,True,True
+cli_001,2025-12-09,LANCHONETE,28.97,debito,outros,False,False
+cli_001,2025-12-10,SUPERMERCADO DIA,115.0,debito,alimentacao,True,True
+cli_001,2025-12-11,PIX RECEBIDO DIARIA,294.03,credito,renda,False,True
+cli_001,2025-12-12,ENEL ENERGIA,110.0,debito,contas,True,True
+cli_001,2025-12-14,SABESP,50.0,debito,contas,True,True
+cli_001,2025-12-15,PARCELA EMPRESTIMO PESSOAL 07/15,380.0,debito,divida,False,True
+cli_001,2025-12-16,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2025-12-16,IFOOD,64.0,debito,outros,False,False
+cli_001,2025-12-17,ACOUGUE SAO JOSE,95.0,debito,alimentacao,True,True
+cli_001,2025-12-18,PIX RECEBIDO DIARIA,300.58,credito,renda,False,True
+cli_001,2025-12-20,GAS BOTIJAO,30.0,debito,contas,True,True
+cli_001,2025-12-21,PIX RECEBIDO DIARIA,296.8,credito,renda,False,True
+cli_001,2025-12-22,PIX RECEBIDO DIARIA,170.06,credito,renda,False,True
+cli_001,2025-12-23,PIX RECEBIDO DIARIA,286.74,credito,renda,False,True
+cli_001,2025-12-24,PIX RECEBIDO DIARIA,265.87,credito,renda,False,True
+cli_001,2025-12-24,SUPERMERCADO DIA,130.0,debito,alimentacao,True,True
+cli_001,2025-12-25,PIX RECEBIDO DIARIA,205.96,credito,renda,False,True
+cli_001,2025-12-27,PIX RECEBIDO DIARIA,250.99,credito,renda,False,True
+cli_001,2025-12-28,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2025-12-30,PIX RECEBIDO DIARIA,211.18,credito,renda,False,True
+cli_001,2025-12-31,LOJAS AMERICANAS,29.06,debito,outros,False,False
+cli_001,2026-01-02,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-01-03,PIX RECEBIDO DIARIA,103.67,credito,renda,False,True
+cli_001,2026-01-03,SUPERMERCADO DIA,120.0,debito,alimentacao,True,True
+cli_001,2026-01-04,PIX RECEBIDO DIARIA,103.29,credito,renda,False,True
+cli_001,2026-01-04,LOJAS AMERICANAS,57.97,debito,outros,False,False
+cli_001,2026-01-05,PIX RECEBIDO DIARIA,173.58,credito,renda,False,True
+cli_001,2026-01-05,ALUGUEL PIX IMOBILIARIA,700.0,debito,moradia,True,True
+cli_001,2026-01-06,PIX RECEBIDO DIARIA,149.66,credito,renda,False,True
+cli_001,2026-01-08,CLARO PRE,50.0,debito,telefone,True,True
+cli_001,2026-01-10,SUPERMERCADO DIA,115.0,debito,alimentacao,True,True
+cli_001,2026-01-11,LANCHONETE,33.26,debito,outros,False,False
+cli_001,2026-01-12,ENEL ENERGIA,110.0,debito,contas,True,True
+cli_001,2026-01-13,PIX RECEBIDO DIARIA,173.81,credito,renda,False,True
+cli_001,2026-01-14,PIX RECEBIDO DIARIA,136.82,credito,renda,False,True
+cli_001,2026-01-14,SABESP,50.0,debito,contas,True,True
+cli_001,2026-01-15,LOJAS AMERICANAS,68.5,debito,outros,False,False
+cli_001,2026-01-15,PARCELA EMPRESTIMO PESSOAL 07/15,380.0,debito,divida,False,True
+cli_001,2026-01-16,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-01-17,ACOUGUE SAO JOSE,95.0,debito,alimentacao,True,True
+cli_001,2026-01-20,PIX RECEBIDO DIARIA,154.83,credito,renda,False,True
+cli_001,2026-01-20,GAS BOTIJAO,30.0,debito,contas,True,True
+cli_001,2026-01-21,PIX RECEBIDO DIARIA,129.11,credito,renda,False,True
+cli_001,2026-01-22,PIX RECEBIDO DIARIA,202.88,credito,renda,False,True
+cli_001,2026-01-24,SUPERMERCADO DIA,130.0,debito,alimentacao,True,True
+cli_001,2026-01-26,PIX RECEBIDO DIARIA,103.14,credito,renda,False,True
+cli_001,2026-01-28,PIX RECEBIDO DIARIA,144.38,credito,renda,False,True
+cli_001,2026-01-28,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-01-28,LANCHONETE,53.37,debito,outros,False,False
+cli_001,2026-01-31,PIX RECEBIDO DIARIA,174.83,credito,renda,False,True
+cli_001,2026-02-01,PIX RECEBIDO DIARIA,176.35,credito,renda,False,True
+cli_001,2026-02-01,LANCHONETE,66.31,debito,outros,False,False
+cli_001,2026-02-02,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-02-03,SUPERMERCADO DIA,120.0,debito,alimentacao,True,True
+cli_001,2026-02-05,PIX RECEBIDO DIARIA,249.62,credito,renda,False,True
+cli_001,2026-02-05,ALUGUEL PIX IMOBILIARIA,700.0,debito,moradia,True,True
+cli_001,2026-02-06,PIX RECEBIDO DIARIA,238.2,credito,renda,False,True
+cli_001,2026-02-07,PIX RECEBIDO DIARIA,148.47,credito,renda,False,True
+cli_001,2026-02-08,CLARO PRE,50.0,debito,telefone,True,True
+cli_001,2026-02-08,LANCHONETE,22.45,debito,outros,False,False
+cli_001,2026-02-10,SUPERMERCADO DIA,115.0,debito,alimentacao,True,True
+cli_001,2026-02-11,PIX RECEBIDO DIARIA,183.22,credito,renda,False,True
+cli_001,2026-02-12,PIX RECEBIDO DIARIA,136.05,credito,renda,False,True
+cli_001,2026-02-12,ENEL ENERGIA,110.0,debito,contas,True,True
+cli_001,2026-02-14,SABESP,50.0,debito,contas,True,True
+cli_001,2026-02-15,PARCELA EMPRESTIMO PESSOAL 07/15,380.0,debito,divida,False,True
+cli_001,2026-02-16,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-02-17,PIX RECEBIDO DIARIA,243.58,credito,renda,False,True
+cli_001,2026-02-17,ACOUGUE SAO JOSE,95.0,debito,alimentacao,True,True
+cli_001,2026-02-18,PIX RECEBIDO DIARIA,237.42,credito,renda,False,True
+cli_001,2026-02-20,PIX RECEBIDO DIARIA,153.6,credito,renda,False,True
+cli_001,2026-02-20,GAS BOTIJAO,30.0,debito,contas,True,True
+cli_001,2026-02-24,SUPERMERCADO DIA,130.0,debito,alimentacao,True,True
+cli_001,2026-02-27,LOJAS AMERICANAS,30.45,debito,outros,False,False
+cli_001,2026-02-28,PIX RECEBIDO DIARIA,203.49,credito,renda,False,True
+cli_001,2026-02-28,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-03-02,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-03-03,SUPERMERCADO DIA,120.0,debito,alimentacao,True,True
+cli_001,2026-03-04,PIX RECEBIDO DIARIA,211.79,credito,renda,False,True
+cli_001,2026-03-05,ALUGUEL PIX IMOBILIARIA,700.0,debito,moradia,True,True
+cli_001,2026-03-07,PIX RECEBIDO DIARIA,233.69,credito,renda,False,True
+cli_001,2026-03-08,CLARO PRE,50.0,debito,telefone,True,True
+cli_001,2026-03-08,LANCHONETE,35.58,debito,outros,False,False
+cli_001,2026-03-10,PIX RECEBIDO DIARIA,173.47,credito,renda,False,True
+cli_001,2026-03-10,SUPERMERCADO DIA,115.0,debito,alimentacao,True,True
+cli_001,2026-03-12,PIX RECEBIDO DIARIA,118.44,credito,renda,False,True
+cli_001,2026-03-12,ENEL ENERGIA,110.0,debito,contas,True,True
+cli_001,2026-03-13,PIX RECEBIDO DIARIA,190.65,credito,renda,False,True
+cli_001,2026-03-14,SABESP,50.0,debito,contas,True,True
+cli_001,2026-03-15,PIX RECEBIDO DIARIA,229.48,credito,renda,False,True
+cli_001,2026-03-15,PARCELA EMPRESTIMO PESSOAL 07/15,380.0,debito,divida,False,True
+cli_001,2026-03-16,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-03-17,PIX RECEBIDO DIARIA,123.76,credito,renda,False,True
+cli_001,2026-03-17,ACOUGUE SAO JOSE,95.0,debito,alimentacao,True,True
+cli_001,2026-03-19,FARMACIA POPULAR,48.6,debito,outros,False,False
+cli_001,2026-03-20,GAS BOTIJAO,30.0,debito,contas,True,True
+cli_001,2026-03-21,PIX RECEBIDO DIARIA,172.79,credito,renda,False,True
+cli_001,2026-03-22,PIX RECEBIDO DIARIA,183.46,credito,renda,False,True
+cli_001,2026-03-23,PIX RECEBIDO DIARIA,231.85,credito,renda,False,True
+cli_001,2026-03-24,SUPERMERCADO DIA,130.0,debito,alimentacao,True,True
+cli_001,2026-03-28,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-03-29,PIX RECEBIDO DIARIA,227.05,credito,renda,False,True
+cli_001,2026-03-31,PIX RECEBIDO DIARIA,203.57,credito,renda,False,True
+cli_001,2026-04-02,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-04-03,SUPERMERCADO DIA,120.0,debito,alimentacao,True,True
+cli_001,2026-04-04,IFOOD,36.42,debito,outros,False,False
+cli_001,2026-04-05,PIX RECEBIDO DIARIA,185.22,credito,renda,False,True
+cli_001,2026-04-05,ALUGUEL PIX IMOBILIARIA,700.0,debito,moradia,True,True
+cli_001,2026-04-07,PIX RECEBIDO DIARIA,311.58,credito,renda,False,True
+cli_001,2026-04-08,PIX RECEBIDO DIARIA,220.85,credito,renda,False,True
+cli_001,2026-04-08,CLARO PRE,50.0,debito,telefone,True,True
+cli_001,2026-04-10,SUPERMERCADO DIA,115.0,debito,alimentacao,True,True
+cli_001,2026-04-12,ENEL ENERGIA,110.0,debito,contas,True,True
+cli_001,2026-04-14,PIX RECEBIDO DIARIA,373.47,credito,renda,False,True
+cli_001,2026-04-14,SABESP,50.0,debito,contas,True,True
+cli_001,2026-04-14,IFOOD,62.92,debito,outros,False,False
+cli_001,2026-04-15,PARCELA EMPRESTIMO PESSOAL 07/15,380.0,debito,divida,False,True
+cli_001,2026-04-16,PIX RECEBIDO DIARIA,363.14,credito,renda,False,True
+cli_001,2026-04-16,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-04-17,ACOUGUE SAO JOSE,95.0,debito,alimentacao,True,True
+cli_001,2026-04-19,PIX RECEBIDO DIARIA,185.19,credito,renda,False,True
+cli_001,2026-04-20,GAS BOTIJAO,30.0,debito,contas,True,True
+cli_001,2026-04-24,PIX RECEBIDO DIARIA,222.9,credito,renda,False,True
+cli_001,2026-04-24,SUPERMERCADO DIA,130.0,debito,alimentacao,True,True
+cli_001,2026-04-26,PIX RECEBIDO DIARIA,320.13,credito,renda,False,True
+cli_001,2026-04-28,PIX RECEBIDO DIARIA,217.52,credito,renda,False,True
+cli_001,2026-04-28,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-05-02,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-05-03,PIX RECEBIDO DIARIA,284.75,credito,renda,False,True
+cli_001,2026-05-03,SUPERMERCADO DIA,120.0,debito,alimentacao,True,True
+cli_001,2026-05-04,PIX RECEBIDO DIARIA,346.93,credito,renda,False,True
+cli_001,2026-05-05,ALUGUEL PIX IMOBILIARIA,700.0,debito,moradia,True,True
+cli_001,2026-05-06,PIX RECEBIDO DIARIA,169.73,credito,renda,False,True
+cli_001,2026-05-08,PIX RECEBIDO DIARIA,230.59,credito,renda,False,True
+cli_001,2026-05-08,CLARO PRE,50.0,debito,telefone,True,True
+cli_001,2026-05-09,PIX RECEBIDO DIARIA,217.92,credito,renda,False,True
+cli_001,2026-05-10,SUPERMERCADO DIA,115.0,debito,alimentacao,True,True
+cli_001,2026-05-12,ENEL ENERGIA,110.0,debito,contas,True,True
+cli_001,2026-05-14,PIX RECEBIDO DIARIA,322.42,credito,renda,False,True
+cli_001,2026-05-14,SABESP,50.0,debito,contas,True,True
+cli_001,2026-05-15,PIX RECEBIDO DIARIA,199.79,credito,renda,False,True
+cli_001,2026-05-15,PARCELA EMPRESTIMO PESSOAL 07/15,380.0,debito,divida,False,True
+cli_001,2026-05-16,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-05-17,ACOUGUE SAO JOSE,95.0,debito,alimentacao,True,True
+cli_001,2026-05-18,PIX RECEBIDO DIARIA,188.09,credito,renda,False,True
+cli_001,2026-05-20,GAS BOTIJAO,30.0,debito,contas,True,True
+cli_001,2026-05-21,LANCHONETE,68.39,debito,outros,False,False
+cli_001,2026-05-24,SUPERMERCADO DIA,130.0,debito,alimentacao,True,True
+cli_001,2026-05-28,PIX RECEBIDO DIARIA,239.78,credito,renda,False,True
+cli_001,2026-05-28,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-05-30,FARMACIA POPULAR,26.65,debito,outros,False,False
+cli_001,2026-06-02,PIX RECEBIDO DIARIA,180.71,credito,renda,False,True
+cli_001,2026-06-02,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-06-02,IFOOD,44.15,debito,outros,False,False
+cli_001,2026-06-03,SUPERMERCADO DIA,120.0,debito,alimentacao,True,True
+cli_001,2026-06-05,PIX RECEBIDO DIARIA,236.96,credito,renda,False,True
+cli_001,2026-06-05,ALUGUEL PIX IMOBILIARIA,700.0,debito,moradia,True,True
+cli_001,2026-06-07,PIX RECEBIDO DIARIA,242.51,credito,renda,False,True
+cli_001,2026-06-08,CLARO PRE,50.0,debito,telefone,True,True
+cli_001,2026-06-10,PIX RECEBIDO DIARIA,134.23,credito,renda,False,True
+cli_001,2026-06-10,SUPERMERCADO DIA,115.0,debito,alimentacao,True,True
+cli_001,2026-06-11,PIX RECEBIDO DIARIA,110.38,credito,renda,False,True
+cli_001,2026-06-12,ENEL ENERGIA,110.0,debito,contas,True,True
+cli_001,2026-06-14,SABESP,50.0,debito,contas,True,True
+cli_001,2026-06-15,PARCELA EMPRESTIMO PESSOAL 07/15,380.0,debito,divida,False,True
+cli_001,2026-06-16,PIX RECEBIDO DIARIA,167.36,credito,renda,False,True
+cli_001,2026-06-16,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-06-17,ACOUGUE SAO JOSE,95.0,debito,alimentacao,True,True
+cli_001,2026-06-18,PIX RECEBIDO DIARIA,246.04,credito,renda,False,True
+cli_001,2026-06-19,PIX RECEBIDO DIARIA,225.29,credito,renda,False,True
+cli_001,2026-06-20,GAS BOTIJAO,30.0,debito,contas,True,True
+cli_001,2026-06-22,PIX RECEBIDO DIARIA,151.93,credito,renda,False,True
+cli_001,2026-06-23,PIX RECEBIDO DIARIA,212.3,credito,renda,False,True
+cli_001,2026-06-24,SUPERMERCADO DIA,130.0,debito,alimentacao,True,True
+cli_001,2026-06-26,PIX RECEBIDO DIARIA,217.27,credito,renda,False,True
+cli_001,2026-06-28,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-06-28,FARMACIA POPULAR,20.96,debito,outros,False,False
+cli_001,2026-06-29,PIX RECEBIDO DIARIA,225.02,credito,renda,False,True
+cli_001,2026-07-02,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-07-03,PIX RECEBIDO DIARIA,258.9,credito,renda,False,True
+cli_001,2026-07-03,SUPERMERCADO DIA,120.0,debito,alimentacao,True,True
+cli_001,2026-07-05,ALUGUEL PIX IMOBILIARIA,700.0,debito,moradia,True,True
+cli_001,2026-07-07,PIX RECEBIDO DIARIA,132.34,credito,renda,False,True
+cli_001,2026-07-08,CLARO PRE,50.0,debito,telefone,True,True
+cli_001,2026-07-09,PIX RECEBIDO DIARIA,132.24,credito,renda,False,True
+cli_001,2026-07-10,SUPERMERCADO DIA,115.0,debito,alimentacao,True,True
+cli_001,2026-07-10,IFOOD,34.44,debito,outros,False,False
+cli_001,2026-07-11,PIX RECEBIDO DIARIA,260.59,credito,renda,False,True
+cli_001,2026-07-12,ENEL ENERGIA,110.0,debito,contas,True,True
+cli_001,2026-07-13,FARMACIA POPULAR,52.93,debito,outros,False,False
+cli_001,2026-07-14,PIX RECEBIDO DIARIA,186.54,credito,renda,False,True
+cli_001,2026-07-14,SABESP,50.0,debito,contas,True,True
+cli_001,2026-07-15,PARCELA EMPRESTIMO PESSOAL 07/15,380.0,debito,divida,False,True
+cli_001,2026-07-16,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-07-17,PIX RECEBIDO DIARIA,273.49,credito,renda,False,True
+cli_001,2026-07-17,ACOUGUE SAO JOSE,95.0,debito,alimentacao,True,True
+cli_001,2026-07-19,PIX RECEBIDO DIARIA,213.36,credito,renda,False,True
+cli_001,2026-07-20,GAS BOTIJAO,30.0,debito,contas,True,True
+cli_001,2026-07-22,PIX RECEBIDO DIARIA,214.85,credito,renda,False,True
+cli_001,2026-07-23,LOJAS AMERICANAS,30.41,debito,outros,False,False
+cli_001,2026-07-24,SUPERMERCADO DIA,130.0,debito,alimentacao,True,True
+cli_001,2026-07-25,LANCHONETE,18.48,debito,outros,False,False
+cli_001,2026-07-28,PIX RECEBIDO DIARIA,127.69,credito,renda,False,True
+cli_001,2026-07-28,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-08-01,PIX RECEBIDO DIARIA,177.61,credito,renda,False,True
+cli_001,2026-08-02,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-08-03,SUPERMERCADO DIA,120.0,debito,alimentacao,True,True
+cli_001,2026-08-04,FARMACIA POPULAR,32.16,debito,outros,False,False
+cli_001,2026-08-05,ALUGUEL PIX IMOBILIARIA,700.0,debito,moradia,True,True
+cli_001,2026-08-05,LOJAS AMERICANAS,24.0,debito,outros,False,False
+cli_001,2026-08-08,CLARO PRE,50.0,debito,telefone,True,True
+cli_001,2026-08-10,PIX RECEBIDO DIARIA,207.8,credito,renda,False,True
+cli_001,2026-08-10,SUPERMERCADO DIA,115.0,debito,alimentacao,True,True
+cli_001,2026-08-12,ENEL ENERGIA,110.0,debito,contas,True,True
+cli_001,2026-08-14,SABESP,50.0,debito,contas,True,True
+cli_001,2026-08-16,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-08-17,PIX RECEBIDO DIARIA,219.02,credito,renda,False,True
+cli_001,2026-08-17,ACOUGUE SAO JOSE,95.0,debito,alimentacao,True,True
+cli_001,2026-08-18,PIX RECEBIDO DIARIA,363.15,credito,renda,False,True
+cli_001,2026-08-20,PIX RECEBIDO DIARIA,351.85,credito,renda,False,True
+cli_001,2026-08-20,GAS BOTIJAO,30.0,debito,contas,True,True
+cli_001,2026-08-20,PAGTO MINIMO FATURA CARTAO,480.0,debito,divida,False,True
+cli_001,2026-08-21,PIX RECEBIDO DIARIA,351.51,credito,renda,False,True
+cli_001,2026-08-22,PIX RECEBIDO DIARIA,241.53,credito,renda,False,True
+cli_001,2026-08-23,PIX RECEBIDO DIARIA,195.84,credito,renda,False,True
+cli_001,2026-08-24,SUPERMERCADO DIA,130.0,debito,alimentacao,True,True
+cli_001,2026-08-26,PIX RECEBIDO DIARIA,341.69,credito,renda,False,True
+cli_001,2026-08-28,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-08-30,LANCHONETE,66.82,debito,outros,False,False
+cli_001,2026-09-01,PIX RECEBIDO DIARIA,273.28,credito,renda,False,True
+cli_001,2026-09-01,LANCHONETE,21.91,debito,outros,False,False
+cli_001,2026-09-02,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-09-03,SUPERMERCADO DIA,120.0,debito,alimentacao,True,True
+cli_001,2026-09-05,PIX RECEBIDO DIARIA,177.56,credito,renda,False,True
+cli_001,2026-09-05,ALUGUEL PIX IMOBILIARIA,700.0,debito,moradia,True,True
+cli_001,2026-09-05,IFOOD,24.63,debito,outros,False,False
+cli_001,2026-09-06,PIX RECEBIDO DIARIA,257.75,credito,renda,False,True
+cli_001,2026-09-08,CLARO PRE,50.0,debito,telefone,True,True
+cli_001,2026-09-09,PIX RECEBIDO DIARIA,188.81,credito,renda,False,True
+cli_001,2026-09-10,SUPERMERCADO DIA,115.0,debito,alimentacao,True,True
+cli_001,2026-09-11,PIX RECEBIDO DIARIA,230.62,credito,renda,False,True
+cli_001,2026-09-12,ENEL ENERGIA,110.0,debito,contas,True,True
+cli_001,2026-09-14,PIX RECEBIDO DIARIA,308.23,credito,renda,False,True
+cli_001,2026-09-14,SABESP,50.0,debito,contas,True,True
+cli_001,2026-09-15,PIX RECEBIDO DIARIA,297.2,credito,renda,False,True
+cli_001,2026-09-16,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-09-17,ACOUGUE SAO JOSE,95.0,debito,alimentacao,True,True
+cli_001,2026-09-18,PIX RECEBIDO DIARIA,156.84,credito,renda,False,True
+cli_001,2026-09-20,GAS BOTIJAO,30.0,debito,contas,True,True
+cli_001,2026-09-20,PAGTO MINIMO FATURA CARTAO,480.0,debito,divida,False,True
+cli_001,2026-09-21,PIX RECEBIDO DIARIA,218.53,credito,renda,False,True
+cli_001,2026-09-24,SUPERMERCADO DIA,130.0,debito,alimentacao,True,True
+cli_001,2026-09-25,PIX RECEBIDO DIARIA,191.18,credito,renda,False,True
+cli_001,2026-09-25,JUROS CHEQUE ESPECIAL,48.0,debito,divida,False,False
+cli_001,2026-09-27,LOJAS AMERICANAS,48.29,debito,outros,False,False
+cli_001,2026-09-28,RECARGA BILHETE UNICO,50.0,debito,transporte,True,True
+cli_001,2026-09-29,FARMACIA POPULAR,46.37,debito,outros,False,False

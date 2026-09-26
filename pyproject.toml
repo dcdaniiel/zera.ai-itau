@@ -1,0 +1,22 @@
+[project]
+name = "zera-ai-itau"
+version = "0.1.0"
+description = "Zera — agente de renegociação que cabe no mês do cliente (Batalha de Agentes Itaú × Google)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "google-adk>=2.0",
+    "google-cloud-aiplatform[agent_engines]",
+    "google-cloud-firestore",
+    "google-cloud-bigquery",
+    "db-dtypes",
+    "pandas",
+    "fastapi",
+    "uvicorn[standard]",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

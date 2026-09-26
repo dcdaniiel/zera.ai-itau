@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+zera_agent/.env
+.zera_state/
+zera_agent/motor/
+zera_agent/dados/
+zera_agent/requirements.txt
+.pytest_cache/
+.DS_Store
