@@ -59,7 +59,7 @@ from dados.loader import fonte_efetiva as fonte_dados, listar_clientes, perfil_c
 from motor import criar_acordo_de_cenario, montar_cenarios, resumo_cenario, situacao_hoje, termos  # noqa: E402
 from zera_agent.agent import MODEL, autenticacao_llm, root_agent  # noqa: E402
 from zera_agent.contexto import Contexto  # noqa: E402
-from zera_agent.experiencia import PREFERENCIAS_PADRAO, Experiencia  # noqa: E402
+from zera_agent.experiencia import PREFERENCIAS_PADRAO, Experiencia, _normalizar  # noqa: E402
 
 log = logging.getLogger("zera.api")
 APP_NAME = "zera"
@@ -222,6 +222,48 @@ _G = r"(oi+|ol[aá]|e a[ií]|eai|opa|hey|hello|bom dia|boa tarde|boa noite|tudo 
 RE_SAUDACAO = re.compile(rf"^\W*{_G}(\W+{_G})*(\W+(zera|zera\.ai))?\W*$", re.IGNORECASE)          # só cumprimento, nada mais
 _A = r"(obrigad[ao]|valeu|brigad[ao]|show|perfeito|ok(ay)?|beleza|entendi|certo|tchau|at[eé] (mais|logo)|bom descanso|boa noite)"
 RE_AGRADECIMENTO = re.compile(rf"^\W*{_A}(\W+{_A})*(\W+(zera|zera\.ai|por (agora|hoje|enquanto)))?\W*$", re.IGNORECASE)
+# "Não fazer nada agora" / "Não mexer nisso por enquanto" / "agora não" / "deixa pra depois": pausa, sem tools nem modelo (texto sem acento)
+RE_PAUSA = re.compile(r"^\W*(nao (fazer|mexer|quero( fazer| mexer)?)( nada| nisso| em nada)?( agora| por enquanto| hoje)?|agora nao|hoje nao|"
+                      r"(deixa|deixar|vamos deixar) (pra|para) depois|depois|por enquanto( nao)?|nada agora|prefiro nao (fazer|mexer)( nada| nisso)?( agora)?)\W*$")
+
+# ---- Opções acionáveis: a lista numerada com que toda resposta termina vira botões na UI ---------------------------
+RE_INICIO_OPCOES = re.compile(r"(?:^|(?<=\n)|(?<=[.!?:]\s))1[).]\s+")   # início do texto, linha nova ou fim de frase
+RE_ITEM_OPCAO = re.compile(r"(?:^|\s+)(\d)[).]\s+")
+
+
+def _acao_opcao(rotulo: str) -> dict:
+    """Como a UI deve reagir ao toque: contratar (abre o card HITL direto, sem modelo), humano, pausar ou enviar o texto."""
+    r = _normalizar(rotulo)
+    m = re.search(r"\bc(\d)\b", r)
+    if "contrat" in r and m:
+        return {"acao": "contratar", "cenario": f"C{m.group(1)}"}
+    if re.search(r"\b(pessoa|atendente|humano|alguem do time)\b", r):
+        return {"acao": "humano"}
+    if re.search(r"nao (fazer|mexer)|agora nao|depois|por enquanto|nada agora|deixar (como|pra|para)", r):
+        return {"acao": "pausar"}
+    return {"acao": "enviar"}
+
+
+def _extrair_opcoes(texto: str) -> tuple[str, list[dict]]:
+    """Separa do texto a enumeração final "1) … 2) … 3) …" (uma por linha ou na mesma linha) e devolve
+    (texto sem a lista, opções). Exige itens sequenciais a partir de 1, pelo menos dois, curtos. Sem lista -> texto intacto."""
+    t = (texto or "").rstrip()
+    for m in reversed(list(RE_INICIO_OPCOES.finditer(t))):
+        partes = RE_ITEM_OPCAO.split(t[m.start():])
+        nums, rotulos = partes[1::2], [p.strip().strip("*").strip().rstrip(".;,") for p in partes[2::2]]
+        if len(rotulos) < 2 or nums != [str(i + 1) for i in range(len(nums))] or any(not r or len(r) > 90 or "\n" in r for r in rotulos):
+            continue
+        cabeca = t[:m.start()].rstrip()
+        return cabeca, [{"id": n, "rotulo": r, **_acao_opcao(r)} for n, r in zip(nums, rotulos)]
+    return t, []
+
+
+def _evento_texto(texto: str, **extra) -> dict:
+    cabeca, opcoes = _extrair_opcoes(texto)
+    ev = {"tipo": "texto", "texto": cabeca or texto, **extra}
+    if opcoes:
+        ev["opcoes"] = opcoes
+    return ev
 
 
 def _roteamento_deterministico(c: Contexto, texto: str) -> str | None:
@@ -243,6 +285,9 @@ def _roteamento_deterministico(c: Contexto, texto: str) -> str | None:
                 "1) Ver quanto eu devo hoje e quanto cresce por mês\n2) Ver as opções que cabem no meu mês\n3) Falar com uma pessoa")
     if RE_AGRADECIMENTO.search(t):
         return f"Por nada, {voc[:-2] if voc else 'até mais'}! Quando quiser, é só me chamar por aqui. Nada é contratado sem a sua confirmação no app."
+    if RE_PAUSA.search(_normalizar(t)):
+        return (f"Tudo bem{', ' + voc[:-2] if voc else ''}. Nada muda sem você pedir: suas dívidas continuam como estão e eu não vou insistir. "
+                "Quando quiser retomar, é só me chamar por aqui.\n\n1) Ver quanto eu devo hoje\n2) Falar com uma pessoa")
     return None
 
 
@@ -332,7 +377,8 @@ async def _resposta_chat(cliente_id: str, sessao_id: str, resultado: dict, ja_vi
     hitl = _hitl_com_sessao(resultado["hitl"], estado, cliente_id) if resultado.get("hitl") else None
     bloqueios = estado.get("bloqueios_guardrail") or []
     c = _ctx(cliente_id)
-    return {"texto": resultado["texto"], "ui": ui[ja_vistos:] if len(ui) >= ja_vistos else ui, "hitl": hitl,
+    cabeca, opcoes = _extrair_opcoes(resultado["texto"] or "")
+    return {"texto": cabeca or resultado["texto"], "opcoes": opcoes, "ui": ui[ja_vistos:] if len(ui) >= ja_vistos else ui, "hitl": hitl,
             "guardrail": bloqueios[-1] if len(bloqueios) > bloqueios_antes else None,
             "sugestoes": _sugestoes_chat(c),
             "estado": {k: estado.get(k) for k in ("alucinacao_numerica", "bloqueios_consentimento", "vulneravel", "gatilho", "pii_redigida")},
@@ -460,8 +506,8 @@ async def _stream_chat(cliente_id: str, sessao_id: str, texto: str, conteudo: ty
     if conteudo is None:
         fixo = _roteamento_deterministico(c0, texto)
         if fixo:  # compreensão de contexto: cumprimento/agradecimento -> resposta direta, sem tools, sem modelo
-            obs.registrar_metrica("zera.chat_roteado", 1, {"tipo": "saudacao"})
-            yield linha({"tipo": "texto", "texto": fixo, "roteado": True})
+            obs.registrar_metrica("zera.chat_roteado", 1, {"tipo": "pausa" if RE_PAUSA.search(_normalizar(texto)) else "saudacao"})
+            yield linha(_evento_texto(fixo, roteado=True))
             yield linha({"tipo": "fim", "sugestoes": _sugestoes_chat(c0), "finops": obs.custo_da_jornada(None), "estado": {}, "acordo": c0.estado.get("acordo")})
             return
     conteudo = conteudo or types.Content(role="user", parts=[types.Part(text=texto)])
@@ -499,7 +545,7 @@ async def _stream_chat(cliente_id: str, sessao_id: str, texto: str, conteudo: ty
                     t = "".join(p.text or "" for p in ev.content.parts if p.text)
                     if t:
                         final = t
-                        yield linha({"tipo": "texto", "texto": t})
+                        yield linha(_evento_texto(t))
     except Exception as e:  # noqa: BLE001 — nunca deixa a UI sem resposta
         log.exception("chat_stream falhou")
         yield linha({"tipo": "erro", "erro": str(e)[:300], "dica": _dica_operador(e),

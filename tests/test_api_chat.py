@@ -182,4 +182,41 @@ def test_botao_contratar_e_gatilho_deterministico_com_confirmacao_no_app(cliente
 def test_cumprimento_nao_chama_modelo_nem_tools(cliente_api):
     linhas = _linhas(cliente_api.post("/chat/stream", json={"cliente_id": CLIENTE, "sessao_id": "s1", "mensagem": "Ola"}))
     assert [l["tipo"] for l in linhas] == ["texto", "fim"] and linhas[0]["roteado"] is True
-    assert "Oi, Cleide" in linhas[0]["texto"] and "1)" in linhas[0]["texto"]
+    assert "Oi, Cleide" in linhas[0]["texto"] and "1)" not in linhas[0]["texto"]        # a enumeração vira botões (opcoes)
+    assert [o["acao"] for o in linhas[0]["opcoes"]] == ["enviar", "enviar", "humano"]
+
+
+# ---------- opções acionáveis (botões) ----------
+
+def test_extrair_opcoes_da_enumeracao_final():
+    from api.main import _extrair_opcoes
+    texto = ("Cleide, o total das suas dívidas hoje é de **R$ 9.104,87**.\n\nO que você prefere fazer agora?\n\n"
+             "1) Ver as opções de parcelamento que cabem no seu orçamento\n2) Falar com uma pessoa\n3) Não mexer nisso por enquanto")
+    cabeca, opcoes = _extrair_opcoes(texto)
+    assert cabeca.endswith("O que você prefere fazer agora?") and "1)" not in cabeca
+    assert [o["acao"] for o in opcoes] == ["enviar", "humano", "pausar"]
+    assert opcoes[0]["rotulo"] == "Ver as opções de parcelamento que cabem no seu orçamento"
+    # enumeração na mesma linha, depois do fim da frase
+    cabeca, opcoes = _extrair_opcoes("Você deve R$ 6.800,00 e cresce R$ 641,50 por mês. 1) ver opções 2) falar com uma pessoa")
+    assert cabeca.endswith("por mês.") and [o["rotulo"] for o in opcoes] == ["ver opções", "falar com uma pessoa"]
+    # "Contratar a C1" abre o card HITL direto (sem modelo)
+    _, opcoes = _extrair_opcoes("A melhor é a **C1**.\n\n1) Contratar a C1\n2) Entender por que\n3) Falar com uma pessoa")
+    assert opcoes[0] == {"id": "1", "rotulo": "Contratar a C1", "acao": "contratar", "cenario": "C1"}
+    # sem enumeração final (ou números no meio do texto): texto intacto
+    for t in ["Seu crediário tem 4 parcelas de R$ 391,95, sem juros.", "Passo 1. Depois vem o passo 2. Fim.",
+              "Dívidas:\n1. Cartão: R$ 4.200\n2. Cheque: R$ 1.100\n\nQuer ver o que cabe?"]:
+        assert _extrair_opcoes(t) == (t, [])
+
+
+def test_stream_emite_opcoes_e_pausa_roteada(cliente_api):
+    linhas = _linhas(cliente_api.post("/chat/stream", json={"cliente_id": CLIENTE, "sessao_id": "botoes-1", "mensagem": "quanto eu devo?"}))
+    texto = [l for l in linhas if l["tipo"] == "texto"][-1]
+    assert texto["texto"].endswith("por mês.") and "1)" not in texto["texto"]
+    assert [(o["rotulo"], o["acao"]) for o in texto["opcoes"]] == [("ver opções", "enviar"), ("falar com uma pessoa", "humano")]
+    # o toque em "Não fazer nada agora" é respondido sem modelo nem tools, com novas opções
+    linhas = _linhas(cliente_api.post("/chat/stream", json={"cliente_id": CLIENTE, "sessao_id": "botoes-1", "mensagem": "Não fazer nada agora"}))
+    assert [l["tipo"] for l in linhas] == ["texto", "fim"] and linhas[0]["roteado"] is True
+    assert "Nada muda sem você pedir" in linhas[0]["texto"] and [o["acao"] for o in linhas[0]["opcoes"]] == ["enviar", "humano"]
+    # resposta não-stream também traz as opções estruturadas
+    r = cliente_api.post("/chat", json={"cliente_id": CLIENTE, "sessao_id": "botoes-2", "mensagem": "quanto eu devo?"}).json()
+    assert "1)" not in r["texto"] and [o["acao"] for o in r["opcoes"]] == ["enviar", "humano"]

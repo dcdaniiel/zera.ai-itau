@@ -55,7 +55,7 @@ cai na conversa. A conversa persiste ao navegar (mesma sessão do ADK). Pode hav
 do acordo (ou uma dívida nova) abre outra jornada — a parcela já contratada vira compromisso fixo e os acordos ficam listados.
 A pergunta "tem gasto fixo fora do extrato?" só aparece quando os dados sugerem (essenciais < 30% da renda ou sobra > 55%), com os números reais.
 No chat, a sequência (Entender → Opções → Escolher → **Confirmar no app** → Acompanhar) só aparece e avança quando a cliente pede cada etapa;
-cumprimentos e agradecimentos são respondidos sem modelo nem tools. Cada opção do card tem o botão **Contratar** (gatilho determinístico:
+cumprimentos, agradecimentos e "não fazer nada agora" são respondidos sem modelo nem tools. Os próximos passos numerados com que toda resposta termina ("1) … 2) …") são extraídos pela API (`opcoes`) e viram **botões** na conversa — o toque envia a opção; "Contratar a C1" abre o card de confirmação direto, sem modelo. Cada opção do card tem o botão **Contratar** (gatilho determinístico:
 `POST /chat/contratar` abre o card de confirmação com os números do motor e `POST /chat/confirmar` executa) — a melhor opção fica destacada e,
 se ela pedir um valor ("parcela até 600"), `montar_cenarios(parcela_alvo)` marca as que atendem ou diz a menor possível e a entrada necessária.
 Números das tools valem para a sessão inteira (caducam quando o estado muda); número inventado pelo modelo nunca chega à cliente — ela recebe

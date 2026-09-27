@@ -7,7 +7,7 @@ import { ArrowUp, Check, ChevronRight, ShieldCheck, Wrench, X } from 'lucide-rea
 import { useEffect, useRef, useState } from 'react'
 import { api, getCliente } from '../api'
 import { Faisca, dataBR } from '../components/ui'
-import type { CardChat, EventoChat, Hitl } from '../types'
+import type { CardChat, EventoChat, Hitl, OpcaoChat } from '../types'
 
 const brl = (v: number) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 const brl0 = (v: number) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
@@ -71,7 +71,7 @@ function Trilha({ etapa }: { etapa: Etapa }) {
 
 type Item =
   | { k: 'cliente'; texto: string }
-  | { k: 'zera'; texto: string; llm?: boolean }
+  | { k: 'zera'; texto: string; llm?: boolean; opcoes?: OpcaoChat[]; usada?: string }
   | { k: 'tools'; chips: Array<{ nome: string; ok?: boolean; erro?: string | null }> }
   | { k: 'card'; bloco: CardChat }
   | { k: 'hitl'; hitl: Hitl; resolvido?: 'sim' | 'nao' }
@@ -202,7 +202,7 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
     else if (e.tipo === 'tool_result') setItens((l) => l.map((it) => it.k === 'tools' ? { ...it, chips: it.chips.map((c) => c.nome === e.nome && c.ok === undefined ? { ...c, ok: e.ok, erro: e.erro } : c) } : it))
     else if (e.tipo === 'card') { push({ k: 'card', bloco: e.bloco }); if (e.bloco.tipo === 'cenarios' && !e.bloco.dados?.nenhum_cenario_cabe) setEtapa('escolher'); if (e.bloco.tipo === 'acordo') setEtapa('acompanhar') }
     else if (e.tipo === 'etapa') setEtapa((atual) => (e.etapa === 'entender' && atual && atual !== 'entender') ? atual : e.etapa)
-    else if (e.tipo === 'texto') push({ k: 'zera', texto: e.texto, llm: !e.roteado })
+    else if (e.tipo === 'texto') push({ k: 'zera', texto: e.texto, llm: !e.roteado, opcoes: e.opcoes })
     else if (e.tipo === 'hitl') { push({ k: 'hitl', hitl: e.hitl }); setEtapa('confirmar') }
     else if (e.tipo === 'guardrail') { /* proteção aplicada no backend (registrada para observabilidade); a cliente vê só a resposta acolhedora */ }
     else if (e.tipo === 'erro') push({ k: 'sistema', texto: e.texto })
@@ -219,6 +219,13 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
     setOcupado(true)
     try { const r = await api.chatContratar(sessao.current, cenarioId); push({ k: 'hitl', hitl: r.hitl }); setEtapa('confirmar') }
     catch (e) { push({ k: 'sistema', texto: e instanceof Error ? e.message : 'não consegui abrir a confirmação' }) } finally { setOcupado(false) }
+  }
+  /* Botões de opção: o toque vira a próxima mensagem (roteada ou para o agente); "Contratar C1" abre o card de confirmação direto, sem modelo. */
+  async function escolher(idx: number, op: OpcaoChat) {
+    if (ocupado || temHitlPendente) return
+    setItens((l) => l.map((it, i) => i === idx && it.k === 'zera' ? { ...it, usada: op.id } : it))
+    if (op.acao === 'contratar' && op.cenario) return contratar(op.cenario)
+    return enviar(op.rotulo)
   }
   async function decidir(idx: number, hitl: Hitl, ok: boolean) {
     if (ocupado) return
@@ -241,7 +248,23 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
         )}
         {itens.map((it, i) => {
           if (it.k === 'cliente') return <div key={i} className="ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-itau-orange text-white px-3 py-2 text-[14px]">{it.texto}</div>
-          if (it.k === 'zera') return <div key={i} className="max-w-[92%] rounded-2xl rounded-bl-md bg-white border border-line px-3 py-2 text-[14px] leading-relaxed"><Texto texto={it.texto} />{it.llm}</div>
+          if (it.k === 'zera') return (
+            <div key={i} className="max-w-[92%] rounded-2xl rounded-bl-md bg-white border border-line px-3 py-2 text-[14px] leading-relaxed">
+              <Texto texto={it.texto} />
+              {it.opcoes && it.opcoes.length > 0 && (
+                <div className="mt-2 flex flex-col gap-1.5" role="group" aria-label="Opções">
+                  {it.opcoes.filter((op) => !it.usada || op.id === it.usada).map((op) => {
+                    const escolhida = it.usada === op.id
+                    const primaria = op.acao === 'contratar'
+                    return (
+                      <button key={op.id} type="button" disabled={!!it.usada || ocupado || temHitlPendente} onClick={() => escolher(i, op)}
+                        className={`w-full rounded-full px-4 py-2.5 text-[13px] font-semibold text-left flex items-center gap-2 transition active:scale-[0.99] disabled:opacity-70 ${escolhida ? 'bg-itau-orange text-white' : primaria ? 'bg-itau-orange text-white' : 'border border-itau-orange text-itau-orange bg-white'}`}>
+                        {escolhida ? <Check className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}<span>{op.rotulo}</span>
+                      </button>)
+                  })}
+                </div>)}
+              {it.llm && <div className="mt-1 text-[10px] text-ink-soft">Gemini · números conferidos com o motor pelos guardrails</div>}
+            </div>)
           if (it.k === 'tools') return <div key={i} className="flex flex-wrap gap-1.5">{it.chips.map((c, j) => c.erro === 'renda_desconhecida'
             ? <span key={j} className="chip text-[11px] bg-itau-orange-soft text-itau-orange"><Wrench className="h-3 w-3" /> {ROTULO_TOOL[c.nome] ?? c.nome}: preciso da sua renda</span>
             : <span key={j} className={`chip text-[11px] ${c.ok === false ? 'bg-danger-soft text-danger' : c.ok ? 'bg-ok-soft text-ok' : 'bg-mist text-ink-soft'}`}><Wrench className="h-3 w-3" /> {ROTULO_TOOL[c.nome] ?? c.nome}{c.ok === undefined ? '…' : c.ok ? ' ✓' : ' ✗'}</span>)}</div>
