@@ -77,7 +77,7 @@ export type Preferencias = { analisar: boolean; momentos: boolean; recomendar: b
 export type EstadoDemo = { hoje: string; gatilhos: any[]; acordo: any | null }
 
 export type PerfilResumo = { cliente_id: string; nome: string; persona: boolean; medoide?: boolean; cluster: number | null; distancia: number | null
-  renda_mediana: number; renda_conhecida: boolean; total_dividas: number; qtd_dividas: number; meses_no_vermelho: number | null
+  renda_mediana: number; renda_media?: number; meses_com_renda?: number; renda_conhecida: boolean; total_dividas: number; qtd_dividas: number; meses_no_vermelho: number | null
   sinais: string; fonte_dividas: string; fonte: string; segmentacao?: string; score?: number }
 export type Clientes = { fonte: string; perfis: PerfilResumo[]; clusters: Array<Record<string, any>> }
 export type Perfil = { cliente_id: string; nome: string; persona: boolean; fonte: string; renda_desconhecida: boolean; renda_mediana: number
@@ -88,7 +88,7 @@ export type CardChat = { tipo: string; dados: any }
 export type Hitl = { request_id: string; tool: string; args: Record<string, unknown>; hint: string; titulo: string; detalhes: Array<{ k: string; v: string }>; resumo?: string; frase_sugerida: string }
 export type EventoChat =
   | { tipo: 'tool_call'; nome: string; args: Record<string, unknown>; rotulo: string }
-  | { tipo: 'tool_result'; nome: string; ok: boolean; explicacao: string }
+  | { tipo: 'tool_result'; nome: string; ok: boolean; erro?: string | null; explicacao: string }
   | { tipo: 'card'; bloco: CardChat }
   | { tipo: 'texto'; texto: string }
   | { tipo: 'llm'; tokens_entrada: number; tokens_saida: number; custo_usd: number }

@@ -88,3 +88,70 @@ def test_guardrail_de_entrada_no_chat_stream(cliente_api):
     assert g["guardrail"]["camada"] == "entrada"
     assert not any(l["tipo"] == "tool_call" for l in linhas)
     assert any(l["tipo"] == "texto" and "como eu funciono" in l["texto"].lower() for l in linhas)   # resposta fixa (injeção), modelo não chamado
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Dados insuficientes (renda não identificada no extrato — caso da amostra exportada só com saídas):
+# o motor NÃO calcula com renda zero; a cliente informa a renda no chat e tudo é recalculado com o valor dito por ela.
+# ----------------------------------------------------------------------------------------------------------------------
+
+@pytest.fixture
+def cliente_sem_renda(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZERA_ESTADO_DIR", str(tmp_path))
+    Contexto.limpar_cache()
+    import api.main as m
+    from motor.capacidade import calcular_capacidade
+
+    c = Contexto.para(CLIENTE)
+    c._renda_base = [0.0] * len(c.perfil.meses)          # como no extrato sem entradas
+    c.perfil.renda_informada = None
+    c._aplicar_renda_informada()
+    c.capacidade = calcular_capacidade(c.perfil, c.politica)
+    assert c.perfil.renda_desconhecida
+    roteiro = {
+        "quanto eu devo?": [("call", "get_perfil_financeiro", {}), ("call", "calcular_capacidade", {}),
+                            ("text", "Você deve R$ 6.800,00. A sua renda não aparece no extrato: quanto entra por mês, mais ou menos?")],
+        "Minha renda é de uns R$ 2.500 por mês": [("call", "informar_renda", {"valor_mensal": 2500}), ("call", "montar_cenarios", {"valor_extra": 0}),
+                                                  ("text", "Anotei R$ 2.500 por mês. Já dá para ver o que cabe. 1) ver opções 2) falar com uma pessoa")],
+    }
+    llm = FakeLlm(roteiro=roteiro, chamadas=[])
+    agente = LlmAgent(name="zera", model=llm, instruction=prompts.ROOT, tools=tools.TODAS,
+                      before_model_callback=guardrails.guardrail_entrada, before_tool_callback=guardrails.exigir_consentimento,
+                      after_tool_callback=guardrails.registrar_numeros, after_model_callback=guardrails.guardrail_saida)
+    monkeypatch.setattr(m, "runner", Runner(agent=agente, app_name=m.APP_NAME, session_service=m.sessoes))
+    yield TestClient(m.app), llm
+    Contexto.limpar_cache()
+
+
+def test_sem_renda_nao_calcula_e_pergunta(cliente_sem_renda):
+    api_, _ = cliente_sem_renda
+    r = api_.get("/chat/inicio", params={"cliente_id": CLIENTE, "sessao_id": "r1"}).json()
+    assert "renda" in r["texto"].lower() and any("renda" in s.lower() for s in r["sugestoes"])
+    linhas = _linhas(api_.post("/chat/stream", json={"cliente_id": CLIENTE, "sessao_id": "r1", "mensagem": "quanto eu devo?"}))
+    cards = [l["bloco"] for l in linhas if l["tipo"] == "card"]
+    assert [c["tipo"] for c in cards] == ["raio_x"]                              # capacidade NÃO vira card com renda zero
+    assert cards[0]["dados"]["renda_conhecida"] is False and cards[0]["dados"]["sobra_mediana"] is None
+    cap = next(l for l in linhas if l["tipo"] == "tool_result" and l["nome"] == "calcular_capacidade")
+    assert cap["ok"] is False                                                    # erro renda_desconhecida
+    texto = next(l["texto"] for l in linhas if l["tipo"] == "texto")
+    assert "quanto entra por mês" in texto.lower() and "[valor a confirmar]" not in texto
+
+
+def test_renda_informada_no_chat_recalcula_tudo(cliente_sem_renda):
+    api_, _ = cliente_sem_renda
+    linhas = _linhas(api_.post("/chat/stream", json={"cliente_id": CLIENTE, "sessao_id": "r2", "mensagem": "Minha renda é de uns R$ 2.500 por mês"}))
+    tipos = [l["bloco"]["tipo"] for l in linhas if l["tipo"] == "card"]
+    assert tipos == ["capacidade", "cenarios"]
+    cap = next(l["bloco"]["dados"] for l in linhas if l["tipo"] == "card" and l["bloco"]["tipo"] == "capacidade")
+    assert cap["parcela_maxima"] > 0 and cap["renda_informada_pela_cliente"] == 2500 and cap["renda_considerada"] == 2500
+    cen = next(l["bloco"]["dados"] for l in linhas if l["tipo"] == "card" and l["bloco"]["tipo"] == "cenarios")
+    assert not cen.get("nenhum_cenario_cabe") and cen["cenarios"] and cen["cenarios"][0]["comprometimento_mensal"] > 0
+    texto = next(l["texto"] for l in linhas if l["tipo"] == "texto")
+    assert "R$ 2.500" in texto and "[valor a confirmar]" not in texto           # número dito pela cliente é permitido
+    c = Contexto.para(CLIENTE)
+    assert c.perfil.renda_informada == 2500 and not c.perfil.renda_desconhecida
+    assert c.estado["memoria"]["renda_informada"] == 2500                      # persiste: proatividade passa a ter contexto
+    # a experiência guiada e a proatividade enxergam a mesma renda informada
+    from zera_agent.experiencia import Experiencia
+    p = Experiencia(c).avaliar_proatividade()
+    assert p.get("checks", {}).get("required_context_available") is not False

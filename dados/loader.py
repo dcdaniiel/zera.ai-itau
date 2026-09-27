@@ -17,6 +17,7 @@ rotuladas `fonte=derivada_extrato` e a interface mostra "estimado do extrato".
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -24,6 +25,8 @@ from pathlib import Path
 import pandas as pd
 
 from motor.modelos import Divida, PerfilFinanceiro, r2
+
+log = logging.getLogger("zera.dados")
 
 AQUI = Path(__file__).parent
 FIXTURES = AQUI.parent / "tests" / "fixtures"
@@ -49,6 +52,7 @@ CATEGORIAS_ESSENCIAIS = {"moradia", "aluguel", "contas", "energia", "agua", "gas
                          "casa", "transporte publico", "posto de combustivel", "contas e servicos"}
 MICRO_NAO_ESSENCIAIS = {"jardinagem", "lavanderia"}
 PADRAO_RENDA = re.compile(r"(?:SALARIO|SAL[ÁA]RIO|PIX RECEBIDO|TED RECEBIDA|PAGAMENTO RECEBIDO|DIARIA|PROVENTO)", re.I)
+PADRAO_NAO_RENDA = re.compile(r"(?:ESTORNO|REEMBOLSO|CANCELAMENTO|DEVOLU)", re.I)
 PADRAO_DIVIDA = re.compile(r"(?:JUROS|PARCELA|FATURA|EMPRESTIMO|EMPR[ÉE]STIMO|MINIMO|M[ÍI]NIMO|ROTATIVO|CHEQUE ESPECIAL)", re.I)
 CAMPOS_DIVIDA = set(Divida.__dataclass_fields__)
 
@@ -72,7 +76,8 @@ def normalizar(df: pd.DataFrame) -> pd.DataFrame:
     df["categoria"] = df["categoria"].astype(str).str.lower().str.strip()
     if "descricao" not in df.columns:
         df["descricao"] = ""
-    renda_mask = (df["tipo"] == "credito") & (df["categoria"].isin({"renda", "salario", "salário"}) | df["descricao"].astype(str).str.contains(PADRAO_RENDA))
+    # toda entrada (tipo E) é renda — mesma regra de dados/sql/zera_tabelas.sql —, exceto estorno/reembolso
+    renda_mask = (df["tipo"] == "credito") & ~df["descricao"].astype(str).str.contains(PADRAO_NAO_RENDA)
     df.loc[renda_mask, "categoria"] = "renda"
     divida_mask = (df["tipo"] == "debito") & (df["categoria"].isin({"divida", "dívida"}) | df["descricao"].astype(str).str.contains(PADRAO_DIVIDA))
     df.loc[divida_mask, "categoria"] = "divida"
@@ -99,6 +104,10 @@ def carregar_amostra() -> pd.DataFrame:
     global _cache_amostra
     if _cache_amostra is None:
         _cache_amostra = normalizar(pd.read_csv(AMOSTRA))
+        meses, entradas = _cache_amostra["mes"].nunique(), int((_cache_amostra["tipo"] == "credito").sum())
+        if entradas == 0 or meses < 3:
+            log.warning("amostra %s cobre %d mês(es) e tem %d entrada(s): a renda ficará 'não identificada' e a zera.ai vai perguntar. "
+                        "Gere uma amostra completa com dados/sql/exportar_amostra.sql.", AMOSTRA.name, meses, entradas)
     return _cache_amostra
 
 
@@ -173,18 +182,19 @@ def listar_clientes() -> list[dict]:
     f = fonte()
     if f == "bigquery":
         z = f"{PROJETO}.{DATASET_ZERA}"
-        linhas = _query(f"""SELECT id_usuario, nome, medoide, cluster, distancia, renda_mediana, renda_conhecida, total_dividas, qtd_dividas,
-                                   meses_no_vermelho, sinais, ordem
+        linhas = _query(f"""SELECT id_usuario, nome, medoide, cluster, distancia, renda_mediana, renda_media, meses_com_renda, renda_conhecida,
+                                   total_dividas, qtd_dividas, meses_no_vermelho, sinais, ordem
                             FROM `{z}.perfis_demo` ORDER BY ordem""")
         return [{"cliente_id": r["id_usuario"], "nome": r["nome"], "persona": False, "medoide": bool(r["medoide"]), "cluster": r["cluster"],
-                 "distancia": r["distancia"], "renda_mediana": r2(r["renda_mediana"] or 0), "renda_conhecida": bool(r["renda_conhecida"]),
+                 "distancia": r["distancia"], "renda_mediana": r2(r["renda_mediana"] or 0), "renda_media": r2(r.get("renda_media") or 0),
+                 "meses_com_renda": int(r.get("meses_com_renda") or 0), "renda_conhecida": bool(r["renda_conhecida"]),
                  "total_dividas": r2(r["total_dividas"] or 0), "qtd_dividas": int(r["qtd_dividas"] or 0), "meses_no_vermelho": r["meses_no_vermelho"],
                  "sinais": r["sinais"], "fonte_dividas": "derivada_extrato", "fonte": "bigquery", "segmentacao": "k-means (BigQuery ML)"} for r in linhas]
     if f == "fixture":
         meta = carregar_dividas_json()
         p, _ = carregar_perfil(meta["cliente_id"])
         return [{"cliente_id": p.cliente_id, "nome": p.nome, "persona": True, "medoide": False, "cluster": None, "distancia": None,
-                 "renda_mediana": p.renda_mediana, "renda_conhecida": not p.renda_desconhecida, "total_dividas": p.total_dividas,
+                 "renda_mediana": p.renda_mediana, "renda_media": p.renda_media, "meses_com_renda": p.meses_com_renda, "renda_conhecida": not p.renda_desconhecida, "total_dividas": p.total_dividas,
                  "qtd_dividas": len(p.dividas), "meses_no_vermelho": None, "sinais": "fixture de teste", "fonte_dividas": "cadastro",
                  "fonte": "fixture", "segmentacao": "nenhuma (fixture)"}]
     from dados.segmentacao import features_por_cliente, pseudonimo, score_endividamento, sinais_de
@@ -192,16 +202,18 @@ def listar_clientes() -> list[dict]:
     df = carregar_amostra()
     feats = features_por_cliente(df)
     feats["score"] = score_endividamento(feats)
-    feats = feats.sort_values("score", ascending=False)
+    # com renda identificada primeiro (dados suficientes para a proatividade); dentro de cada grupo, mais endividado primeiro
+    feats["renda_ok"] = (feats["meses_com_renda"] > 0).astype(int)
+    feats = feats.sort_values(["renda_ok", "score"], ascending=[False, False])
     perfis = []
     for cid, row in feats.iterrows():
         dividas = derivar_dividas(df, str(cid))
         if not dividas:
             continue
         ordem = len(perfis) + 1
-        renda_conhecida = bool(row["renda_mediana"] > 0)
+        renda_conhecida = bool(row["meses_com_renda"] > 0)
         perfis.append({"cliente_id": str(cid), "nome": pseudonimo(str(cid), ordem), "persona": False, "medoide": ordem == 1, "cluster": None,
-                       "distancia": None, "renda_mediana": r2(row["renda_mediana"]), "renda_conhecida": renda_conhecida,
+                       "distancia": None, "renda_mediana": r2(row["renda_mediana"]), "renda_media": r2(row["renda_media"]), "meses_com_renda": int(row["meses_com_renda"]), "renda_conhecida": renda_conhecida,
                        "total_dividas": r2(sum(d["saldo"] for d in dividas)), "qtd_dividas": len(dividas),
                        "meses_no_vermelho": int(row["meses_no_vermelho"]), "sinais": sinais_de(row, renda_conhecida),
                        "fonte_dividas": "derivada_extrato", "fonte": "amostra", "segmentacao": "regras (amostra local)",

@@ -24,7 +24,12 @@ def priorizar_dividas(perfil: PerfilFinanceiro, politica: dict | None = None) ->
     for d in perfil.dividas:
         peso = pesos.get(d.consequencia, 0.0) if d.dias_atraso >= pol["dias_atraso_consequencia"] else 0.0
         score = d.custo_mensal + peso
-        motivo = f"custa {d.custo_mensal:.2f} por mês ({d.taxa_mensal*100:.1f}% a.m.)"
+        if d.taxa_mensal > 0:
+            motivo = f"custa {d.custo_mensal:.2f} por mês ({d.taxa_mensal*100:.1f}% a.m.)"
+        elif d.parcela_atual and d.parcelas_restantes:
+            motivo = f"sem juros: {d.parcelas_restantes} parcelas de {d.parcela_atual:.2f} já com data para acabar"
+        else:
+            motivo = "sem juros correndo"
         if peso > 0:
             motivo += f"; {d.dias_atraso} dias de atraso, risco de {d.consequencia.replace('_', ' ')}"
         ordem.append({

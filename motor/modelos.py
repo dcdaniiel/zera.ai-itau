@@ -71,9 +71,27 @@ class PerfilFinanceiro:
         return r2(median(self.renda_mensal)) if self.renda_mensal else 0.0
 
     @property
+    def renda_media(self) -> float:
+        """Média mensal das entradas do histórico (total de entradas / meses cobertos) — a renda 'oficial' do perfil."""
+        return r2(sum(self.renda_mensal) / len(self.renda_mensal)) if self.renda_mensal else 0.0
+
+    @property
+    def meses_com_renda(self) -> int:
+        return sum(1 for r in self.renda_mensal if r > 0)
+
+    @property
     def renda_desconhecida(self) -> bool:
-        """Extrato sem entradas de renda (dados insuficientes): a experiência pergunta antes de calcular."""
-        return self.renda_mediana <= 0 and self.renda_informada is None
+        """Histórico sem NENHUMA entrada (dados insuficientes): a experiência pergunta antes de calcular.
+        Com entradas em alguns meses a renda é conhecida (irregular) e o motor trabalha com a série mensal."""
+        return self.meses_com_renda == 0 and self.renda_informada is None
+
+    @property
+    def renda_fonte(self) -> str:
+        if self.renda_informada is not None:
+            return "informada pela cliente"
+        if self.meses_com_renda:
+            return f"média mensal das entradas do extrato ({self.meses_com_renda} de {len(self.renda_mensal)} meses com entrada)"
+        return "não identificada no extrato"
 
     @property
     def essenciais_mediana(self) -> float:
@@ -101,6 +119,9 @@ class PerfilFinanceiro:
             "compromissos_mensal": self.compromissos_mensal,
             "sobra_mensal": self.sobra_mensal,
             "renda_mediana": self.renda_mediana,
+            "renda_media": self.renda_media,
+            "meses_com_renda": self.meses_com_renda,
+            "renda_fonte": self.renda_fonte,
             "essenciais_mediana": self.essenciais_mediana,
             "dividas": [d.to_dict() for d in self.dividas],
             "total_dividas": self.total_dividas,

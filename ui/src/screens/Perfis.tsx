@@ -43,7 +43,7 @@ export function Perfis({ onEscolher }: { onEscolher: (p: PerfilResumo) => void }
               <div className="flex items-center gap-2"><span className="font-bold truncate">{p.nome}</span>
                 <span className={`chip ${p.medoide ? 'bg-itau-orange-soft text-itau-orange' : 'bg-mist text-ink-soft'}`}>{p.persona ? 'fixture de teste' : p.medoide ? 'mais típico do segmento' : `cliente real${p.cluster != null ? ` · cluster ${p.cluster}` : ''}`}</span></div>
               <div className="mt-1 text-[12px] text-ink-soft truncate">{p.sinais || '—'}</div>
-              <div className="mt-1 text-[12px] text-ink-soft">{p.renda_conhecida ? `renda ~${brl0(p.renda_mediana)}/mês` : 'renda não identificada (a zera.ai pergunta)'} · {p.qtd_dividas} dívida{p.qtd_dividas === 1 ? '' : 's'} · {brl0(p.total_dividas)}{p.fonte_dividas === 'derivada_extrato' ? ' (estimado do extrato)' : ''}</div>
+              <div className="mt-1 text-[12px] text-ink-soft">{p.renda_conhecida ? `renda média ${brl0(p.renda_media || p.renda_mediana)}/mês (entradas${p.meses_com_renda ? `, ${p.meses_com_renda} meses` : ''})` : 'renda não identificada no extrato (a zera.ai pergunta)'} · {p.qtd_dividas} dívida{p.qtd_dividas === 1 ? '' : 's'} · {brl0(p.total_dividas)}{p.fonte_dividas === 'derivada_extrato' ? ' (estimado do extrato)' : ''}</div>
             </div>
             <ChevronRight className="h-5 w-5 text-ink-soft shrink-0" />
           </button>

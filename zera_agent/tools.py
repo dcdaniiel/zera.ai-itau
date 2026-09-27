@@ -61,38 +61,123 @@ def _ui(tool_context: ToolContext, tipo: str, dados: dict) -> None:
 
 # ---------- Diagnóstico ----------
 
+PERGUNTA_RENDA = "Quanto entra na sua conta por mês, mais ou menos?"
+
+
+def _dados_insuficientes(c: Contexto) -> dict | None:
+    """Quadro de produto (exceção 'dados insuficientes'): sem renda no extrato NÃO se calcula sobra, parcela máxima
+    nem cenário — a zera.ai pergunta e a cliente informa (informar_renda). Nunca calcular com renda zero."""
+    if c.perfil.renda_desconhecida:
+        return {"erro": "renda_desconhecida", "pergunta": PERGUNTA_RENDA,
+                "instrucao": ("O extrato não traz a renda desta cliente. Pergunte quanto entra por mês (valor aproximado) e, "
+                              "quando ela responder, chame informar_renda(valor_mensal) ANTES de calcular qualquer coisa. "
+                              "Não cite sobra, parcela máxima nem cenários enquanto isso.")}
+    return None
+
+
+def _capacidade_dict(c: Contexto) -> dict:
+    d = c.capacidade.to_dict()
+    d["renda_considerada"] = c.perfil.renda_media
+    d["renda_fonte"] = c.perfil.renda_fonte
+    d["renda_informada_pela_cliente"] = c.perfil.renda_informada
+    d["essenciais_mediana"] = c.perfil.essenciais_mediana
+    d["compromissos_informados"] = round(sum(x["valor_mensal"] for x in c.estado.get("compromissos_extras", [])), 2)
+    return d
+
+
 def get_perfil_financeiro(tool_context: ToolContext) -> dict:
     """Raio-X consolidado do cliente: dívidas (saldo, taxa, custo mensal, atraso), total devido,
-    quanto a dívida cresce por mês, renda e contas essenciais dos últimos 12 meses."""
+    quanto a dívida cresce por mês, renda e contas essenciais dos últimos 12 meses.
+    Se `renda_conhecida` vier false, a renda não está no extrato: pergunte e chame informar_renda antes de calcular."""
     c = _ctx(tool_context)
     p = c.perfil
+    renda_conhecida = not p.renda_desconhecida
     resposta = {
         "cliente": p.nome,
         "hoje": c.estado["hoje"],
         "dividas": [d.to_dict() for d in p.dividas],
         "total_dividas": p.total_dividas,
         "custo_total_mensal": p.custo_total_mensal,
-        "renda_mediana": p.renda_mediana,
+        "renda_conhecida": renda_conhecida,
+        "renda_media": p.renda_media if renda_conhecida else None,          # média mensal das entradas do histórico
+        "renda_mediana": p.renda_mediana if renda_conhecida else None,
+        "meses_com_renda": p.meses_com_renda,
+        "renda_fonte": p.renda_fonte,
+        "renda_informada_pela_cliente": p.renda_informada,
         "essenciais_mediana": p.essenciais_mediana,
-        "sobra_mediana": c.capacidade.sobra_mediana,
+        "sobra_mediana": c.capacidade.sobra_mediana if renda_conhecida else None,
         "meses": p.meses,
-        "sobra_por_mes": dict(zip(p.meses, p.sobra_mensal)),
+        "sobra_por_mes": dict(zip(p.meses, p.sobra_mensal)) if renda_conhecida else {},
         "tem_reserva": p.tem_reserva,
-        "explicacao": (
-            f"Hoje a dívida cresce {p.custo_total_mensal:.2f} por mês só de juros; "
-            f"a sobra típica depois das contas essenciais é {c.capacidade.sobra_mediana:.2f}."
-        ),
+        "fonte_dividas": sorted({d.fonte for d in p.dividas}),
     }
+    if renda_conhecida:
+        resposta["explicacao"] = (f"Hoje a dívida cresce {p.custo_total_mensal:.2f} por mês só de juros. Renda: {p.renda_media:.2f} por mês "
+                                  f"({p.renda_fonte}); a sobra típica depois das contas essenciais é {c.capacidade.sobra_mediana:.2f}.")
+    else:
+        resposta["explicacao"] = (f"Hoje a dívida cresce {p.custo_total_mensal:.2f} por mês só de juros. A renda NÃO aparece no extrato "
+                                  f"(contas essenciais típicas: {p.essenciais_mediana:.2f}); pergunte quanto entra por mês e chame "
+                                  "informar_renda antes de falar em sobra, parcela máxima ou cenários.")
+        resposta["pergunta"] = PERGUNTA_RENDA
     resposta["numeros_permitidos"] = numeros_de(resposta)
     _ui(tool_context, "raio_x", resposta)
     return resposta
 
 
+def informar_renda(tool_context: ToolContext, valor_mensal: float) -> dict:
+    """A cliente informou quanto entra por mês (use SÓ quando ela disser o valor). Grava a renda informada, recalcula a
+    capacidade (sobra, parcela máxima, meses fracos) e devolve os números. Necessária quando o extrato não traz a renda
+    (renda_conhecida=false); se o extrato já tem renda, ela prevalece e a tool avisa."""
+    c = _ctx(tool_context)
+    try:
+        valor = float(valor_mensal)
+    except (TypeError, ValueError):
+        return {"ok": False, "erro": "valor_invalido", "instrucao": "Peça o valor aproximado em reais por mês."}
+    if not (100 <= valor <= 500_000):
+        return {"ok": False, "erro": "valor_fora_da_faixa", "instrucao": "Confirme o valor: parece fora do esperado para renda mensal."}
+    if not c.perfil.renda_desconhecida and c.perfil.renda_informada is None:
+        resposta = {"ok": True, "renda_no_extrato": c.perfil.renda_mediana, "usada": "extrato",
+                    "explicacao": f"O extrato já mostra renda de {c.perfil.renda_mediana:.2f} por mês; os cálculos usam o extrato."}
+        resposta["numeros_permitidos"] = numeros_de(resposta) + [valor]
+        return resposta
+    c.informar_renda(valor)
+    cap = _capacidade_dict(c)
+    resposta = {"ok": True, "renda_informada": round(valor, 2), "usada": "informada_pela_cliente", "capacidade": cap,
+                "explicacao": (f"Renda informada de {valor:.2f} por mês anotada. Com as contas essenciais de {c.perfil.essenciais_mediana:.2f}, "
+                               f"a parcela máxima que cabe é {cap['parcela_maxima']:.2f} por mês.")}
+    resposta["numeros_permitidos"] = numeros_de(resposta)
+    _ui(tool_context, "capacidade", cap)
+    return resposta
+
+
+def informar_gasto_fixo(tool_context: ToolContext, descricao: str, valor_mensal: float) -> dict:
+    """A cliente citou um gasto fixo mensal que não aparece no extrato (aluguel pago em dinheiro, remédio, escola...).
+    Registra o compromisso, reduz a sobra e recalcula a capacidade. Use só com valor dito por ela."""
+    c = _ctx(tool_context)
+    try:
+        valor = float(valor_mensal)
+    except (TypeError, ValueError):
+        return {"ok": False, "erro": "valor_invalido"}
+    if not (0 < valor <= 100_000):
+        return {"ok": False, "erro": "valor_fora_da_faixa"}
+    item = c.adicionar_compromisso(str(descricao)[:60], valor)
+    if (faltando := _dados_insuficientes(c)):
+        return {"ok": True, "compromisso": item, **faltando}
+    cap = _capacidade_dict(c)
+    resposta = {"ok": True, "compromisso": item, "capacidade": cap,
+                "explicacao": f"Gasto de {valor:.2f} por mês ({item['descricao']}) considerado; a parcela máxima agora é {cap['parcela_maxima']:.2f}."}
+    resposta["numeros_permitidos"] = numeros_de(resposta)
+    _ui(tool_context, "capacidade", cap)
+    return resposta
+
+
 def calcular_capacidade(tool_context: ToolContext) -> dict:
     """Capacidade real de pagamento: sobra segura, parcela máxima, meses fracos e respiros por ano,
-    com a explicação de como foi calculada."""
+    com a explicação de como foi calculada. Exige renda conhecida (extrato ou informar_renda)."""
     c = _ctx(tool_context)
-    resposta = c.capacidade.to_dict()
+    if (faltando := _dados_insuficientes(c)):
+        return faltando
+    resposta = _capacidade_dict(c)
     resposta["numeros_permitidos"] = numeros_de(resposta)
     _ui(tool_context, "capacidade", resposta)
     return resposta
@@ -114,6 +199,8 @@ def simular_planos(tool_context: ToolContext, dinheiro_extra: float = 0.0) -> di
     C (parcela que cabe + respiros) e o plano padrão de 12x usado como contraste.
     `dinheiro_extra`: valor disponível agora (13º, restituição, FGTS), se houver."""
     c = _ctx(tool_context)
+    if (faltando := _dados_insuficientes(c)):
+        return faltando
     resposta = _simular(c.perfil, c.capacidade, c.politica, dinheiro_extra=dinheiro_extra)
     tool_context.state["planos"] = {p["id"]: p for p in resposta["planos"]}
     _ui(tool_context, "planos", resposta)
@@ -127,6 +214,8 @@ def montar_cenarios(tool_context: ToolContext, valor_extra: float = 0.0) -> dict
     a parcela máxima, a parcela de conforto do perfil (renda irregular) e os respiros. Devolve o recomendado
     (mais barato dentro do conforto que tira o cliente da negativação) e alternativas: mais_barato, mais_folga, mais_rapido."""
     c = _ctx(tool_context)
+    if (faltando := _dados_insuficientes(c)):
+        return faltando
     resposta = _montar_cenarios(c.perfil, c.capacidade, valor_extra=valor_extra, politica=c.politica)
     tool_context.state["cenarios"] = {cen["id"]: cen for cen in resposta.get("cenarios", [])}
     _ui(tool_context, "cenarios", resposta)
@@ -137,6 +226,8 @@ def montar_cenarios(tool_context: ToolContext, valor_extra: float = 0.0) -> dict
 def comparar_com_padrao(tool_context: ToolContext, plano_id: str) -> dict:
     """Compara um plano (A, B ou C) com a renegociação padrão de 12x e com a situação de hoje."""
     c = _ctx(tool_context)
+    if (faltando := _dados_insuficientes(c)):
+        return faltando
     planos = tool_context.state.get("planos") or {p["id"]: p for p in _simular(c.perfil, c.capacidade, c.politica)["planos"]}
     plano = planos.get(plano_id.upper())
     if not plano:
@@ -309,7 +400,7 @@ acionar_respiro_tool = FunctionTool(acionar_respiro, require_confirmation=True)
 amortizar_tool = FunctionTool(amortizar, require_confirmation=_amortizar_precisa_confirmacao)
 ROTULOS_HITL = {"fechar_acordo": "Contratar o acordo", "acionar_respiro": "Usar um respiro", "amortizar": "Amortizar com o dinheiro extra"}
 
-TOOLS_DIAGNOSTICO = [get_perfil_financeiro, calcular_capacidade, priorizar_dividas]
+TOOLS_DIAGNOSTICO = [get_perfil_financeiro, informar_renda, informar_gasto_fixo, calcular_capacidade, priorizar_dividas]
 TOOLS_NEGOCIADOR = [montar_cenarios, simular_planos, comparar_com_padrao]
 TOOLS_ACOMPANHAMENTO = [fechar_acordo_tool, status_acordo, acionar_respiro_tool, amortizar_tool, listar_gatilhos]
 TOOLS_ROOT = [registrar_consentimento, revogar_consentimento, escalar_humano]

@@ -353,7 +353,8 @@ async def _stream_chat(cliente_id: str, sessao_id: str, texto: str, conteudo: ty
                 for fr in ev.get_function_responses():
                     if fr.name != "adk_request_confirmation":
                         resp = fr.response if isinstance(fr.response, dict) else {}
-                        yield linha({"tipo": "tool_result", "nome": fr.name, "ok": resp.get("ok", "erro" not in resp), "explicacao": str(resp.get("explicacao", resp.get("erro", "")))[:300]})
+                        yield linha({"tipo": "tool_result", "nome": fr.name, "ok": resp.get("ok", "erro" not in resp), "erro": resp.get("erro"),
+                                     "explicacao": str(resp.get("explicacao", resp.get("erro", "")))[:300]})
                 delta_ui = (ev.actions.state_delta or {}).get("ui") if ev.actions else None
                 if delta_ui:
                     for bloco in delta_ui[vistos:] if len(delta_ui) >= vistos else delta_ui:

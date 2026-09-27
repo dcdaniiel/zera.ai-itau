@@ -101,7 +101,7 @@ cand AS (
   SELECT
     c.id_usuario, c.cluster, ROUND(c.distancia, 4) AS distancia,
     CONCAT(nomes.lista[OFFSET(MOD(ABS(FARM_FINGERPRINT(c.id_usuario)), 16))], ' ', UPPER(SUBSTR(c.id_usuario, 1, 4))) AS pseudonimo,
-    p.renda_mediana, p.renda_conhecida, p.meses_no_vermelho, ROUND(IFNULL(p.cv_renda, 0), 3) AS cv_renda, p.n_meses,
+    p.renda_mediana, p.renda_media, p.meses_com_renda, p.renda_conhecida, p.meses_no_vermelho, ROUND(IFNULL(p.cv_renda, 0), 3) AS cv_renda, p.n_meses,
     c.qtd_parcelas_media, c.sinais_rotativo, c.sinais_emprestimo,
     (SELECT ROUND(SUM(saldo), 2) FROM `${PROJETO}.${DATASET}.dividas_derivadas` d WHERE d.id_usuario = c.id_usuario) AS total_dividas,
     (SELECT COUNT(*) FROM `${PROJETO}.${DATASET}.dividas_derivadas` d WHERE d.id_usuario = c.id_usuario) AS qtd_dividas
@@ -111,7 +111,7 @@ cand AS (
   WHERE c.cluster = (SELECT cluster FROM alvo)
 ),
 ordenado AS (
-  SELECT *, ROW_NUMBER() OVER (ORDER BY distancia) AS ordem FROM cand WHERE qtd_dividas > 0
+  SELECT *, ROW_NUMBER() OVER (ORDER BY renda_conhecida DESC, distancia) AS ordem FROM cand WHERE qtd_dividas > 0
 )
 SELECT
   * EXCEPT (pseudonimo),

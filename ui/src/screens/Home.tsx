@@ -44,7 +44,12 @@ export function Home({ nome, proativa, acordo, erro, onAbrir, onAbrirBotao, onDi
 
         {carregando && <div className="mt-4 text-center text-[11px] text-ink-soft" aria-busy="true">zera.ai avaliando se há algo útil para te dizer…</div>}
         {proativa?.silent && !acordo && !carregando && (
-          <div className="mt-4 rounded-2xl border border-dashed border-line p-3 text-[11px] text-ink-soft">zera.ai em silêncio: {proativa.reason}<span className="block mt-1">{Object.entries(proativa.checks ?? {}).filter(([, v]) => !v).map(([k]) => k).join(', ') || 'todas as pré-condições ok'}</span></div>
+          proativa.checks?.required_context_available === false && /renda/i.test(proativa.reason ?? '')
+            ? <button onClick={onAbrirBotao} className="mt-4 w-full text-left rounded-2xl border border-itau-orange/40 bg-itau-orange-soft/40 p-3 text-[12px]">
+                <b className="text-itau-orange">zera.ai</b> ainda não te procurou: a sua renda não aparece no extrato e, sem ela, não calcula nada — nem promete.
+                <span className="block mt-1 font-semibold">Toque aqui (ou na faísca) e me diga quanto entra por mês. A partir daí eu te aviso quando houver algo útil.</span>
+              </button>
+            : <div className="mt-4 rounded-2xl border border-dashed border-line p-3 text-[11px] text-ink-soft">zera.ai em silêncio: {proativa.reason}<span className="block mt-1">{Object.entries(proativa.checks ?? {}).filter(([, v]) => !v).map(([k]) => k).join(', ') || 'todas as pré-condições ok'}</span></div>
         )}
         <div className="h-16" />
       </div>

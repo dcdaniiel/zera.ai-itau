@@ -14,15 +14,23 @@ dados/        loader (BigQuery | amostra real | fixture), segmentação por regr
 zera_agent/   experiencia.py (máquina de estados + contrato estruturado + roteamento de intenção), agente ADK, tools, guardrails, contexto, observabilidade (OTel/logs/métricas/FinOps)
 api/          FastAPI: /v1/clientes (perfis do BQ), experiência (spec v1), /chat/inicio + /chat/stream + /chat/confirmar (agente ADK com HITL nativo, NDJSON), /health /ready /metrics — serve a UI buildada
 ui/           app mobile (React + Vite + Tailwind, paleta Itaú): perfis → onboarding → preferências → home (trigger) → experiência de 10 telas | conversa com o agente (cards, HITL, guardrails)
-tests/        60 testes sem rede (motor, fluxo ponta a ponta, agente com HITL, API de chat, guardrails, dados); tests/fixtures = perfil sintético SÓ para testes
+tests/        62 testes sem rede (motor, fluxo ponta a ponta, agente com HITL, API de chat, guardrails, dados); tests/fixtures = perfil sintético SÓ para testes
 infra/        setup GCP (dados + Model Armor), deploy Cloud Run (produção), observabilidade/FinOps, Agent Engine
 ```
 
 **Nenhum dado é mockado.** Os perfis vêm da base do evento (`hackathon_dados.extrato_sintetico`): no GCP, pelo cluster-alvo do
 k-means (BigQuery ML → `zera.perfis_demo`); local, pela amostra real exportada do BigQuery (`dados/amostra_bq_extrato_sintetico.csv`)
 com segmentação por regras. O cliente mais típico do segmento recebe o nome da persona do produto ("Cleide"); os demais, pseudônimos
-determinísticos (identidade fictícia). Dívidas inferidas do extrato ficam rotuladas "estimado do extrato". Quando o extrato não traz
-renda, a zera.ai **pergunta** antes de calcular (dados insuficientes) — nunca inventa.
+determinísticos (identidade fictícia). Dívidas inferidas do extrato ficam rotuladas "estimado do extrato". **Renda = média mensal das
+entradas (tipo `E`) do histórico** do cliente (12 meses), com a fonte sempre exibida; quando o histórico não traz nenhuma entrada, o motor
+**não calcula** sobra/parcela/cenários (dados insuficientes): a zera.ai pergunta, a cliente informa (`informar_renda`, no chat ou na
+experiência guiada) e tudo é recalculado com o valor dito por ela — nunca inventa.
+
+> **Amostra local:** `dados/amostra_bq_extrato_sintetico.csv` atual veio de um `LIMIT 10000` ordenado por descrição — só saídas de
+> jan/2025, sem entradas —, então todo perfil aparece com "renda não identificada" e a proatividade fica em silêncio até a renda ser
+> informada. Gere uma amostra completa (12 meses, entradas e saídas, 40 clientes do segmento) com
+> `bq query --project_id=batalha-time-03-vhxk --use_legacy_sql=false --format=csv --max_rows=2000000 "$(cat dados/sql/exportar_amostra.sql)" > dados/amostra_bq_extrato_sintetico.csv`
+> e reinicie a API. Em `ZERA_FONTE=bigquery` a renda já vem do histórico completo (`zera.perfil_cliente.renda_media`).
 
 ## Rodar local
 
@@ -31,7 +39,7 @@ pip install -r requirements.txt            # ou: uv sync
 cp zera_agent/env.demo zera_agent/.env     # lido automaticamente (adk web, uvicorn, pytest); ZERA_FONTE=amostra roda sem credenciais | bigquery (após publicar_bq)
 unset GOOGLE_CLOUD_LOCATION                # variável exportada no shell tem precedência sobre o .env (e o app avisa); gemini-3.x é servido em "global"
 gcloud auth application-default login      # para o Gemini responder "por que essa opção?" e as perguntas livres
-uv run pytest -q                           # 60 testes, sem rede (ou: pytest -q com o venv ativo)
+uv run pytest -q                           # 62 testes, sem rede (ou: pytest -q com o venv ativo)
 uv run uvicorn api.main:app --reload --port 8080   # API (+ serve ui/dist se existir)
 cd ui && npm install && npm run dev        # http://localhost:5173 — /api vai para :8080
 ```
@@ -43,7 +51,8 @@ e o painel FinOps (chamadas, tokens e custo estimado do LLM).
 
 **Conversa com o agente (ADK + HITL):** sem balão na home (cliente sem gatilho, ou balão dispensado), o botão flutuante abre a conversa;
 na experiência guiada, o link "Conversar" faz o mesmo. A abertura é determinística (contexto + 3 proteções + sugestões de próximo passo);
-cada mensagem vai para o agente ADK via `/chat/stream` e a tela mostra, conforme acontecem, os chips de tool, os cards do motor
+cada mensagem vai para o agente ADK via `/chat/stream` e a tela mostra, conforme acontecem, os chips de tool (`informar_renda` /
+`informar_gasto_fixo` quando você diz um valor), os cards do motor
 (raio-X, capacidade, prioridades, cenários com "Quero esta", planos, acordo), o texto, o selo de guardrail e o custo do turno.
 Contratar/respiro/amortizar disparam o **card HITL** (`adk_request_confirmation`): a tool só executa depois de "Confirmar" no app
 (`/chat/confirmar`), com o consentimento registrado (`canal=hitl_app` + frase). A conversa exige `gcloud auth application-default login`

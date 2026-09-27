@@ -18,12 +18,39 @@ const ROTULO_TOOL: Record<string, string> = {
   fechar_acordo: 'contratando o acordo', status_acordo: 'consultando o acordo', acionar_respiro: 'acionando o respiro',
   amortizar: 'simulando amortização', listar_gatilhos: 'verificando avisos', escalar_humano: 'chamando uma pessoa',
   registrar_consentimento: 'registrando consentimento', revogar_consentimento: 'apagando seus dados',
+  informar_renda: 'anotando sua renda', informar_gasto_fixo: 'anotando o gasto fixo',
+}
+
+/* Markdown leve para o texto do agente: **negrito**, itens "- " / "1) " / "1." e parágrafos. Sem biblioteca. */
+function Inline({ t }: { t: string }) {
+  const partes = t.split(/(\*\*[^*]+\*\*)/g).filter(Boolean)
+  return <>{partes.map((x, i) => x.startsWith('**') && x.endsWith('**') ? <b key={i}>{x.slice(2, -2)}</b> : <span key={i}>{x.replace(/\*/g, '')}</span>)}</>
+}
+function Texto({ texto }: { texto: string }) {
+  const blocos = texto.replace(/\r/g, '').split(/\n{2,}/).map((b) => b.trim()).filter(Boolean)
+  return (
+    <div className="space-y-2">
+      {blocos.map((b, i) => {
+        const linhas = b.split('\n').map((l) => l.trim()).filter(Boolean)
+        const lista = linhas.length > 0 && linhas.every((l) => /^([-•*]|\d+[).])\s+/.test(l))
+        if (lista) {
+          const numerada = /^\d+[).]/.test(linhas[0])
+          return (
+            <ol key={i} className={`space-y-1 pl-1 ${numerada ? '' : 'list-none'}`}>
+              {linhas.map((l, j) => { const m = l.match(/^(?:[-•*]|(\d+)[).])\s+(.*)$/); return (
+                <li key={j} className="flex gap-2"><span className={`shrink-0 ${numerada ? 'h-5 w-5 rounded-full bg-itau-orange-soft text-itau-orange grid place-items-center text-[11px] font-bold' : 'text-itau-orange'}`}>{numerada ? (m?.[1] ?? j + 1) : '•'}</span><span><Inline t={m?.[2] ?? l} /></span></li>) })}
+            </ol>)
+        }
+        return <p key={i}>{linhas.map((l, j) => <span key={j}><Inline t={l} />{j < linhas.length - 1 && <br />}</span>)}</p>
+      })}
+    </div>
+  )
 }
 
 type Item =
   | { k: 'cliente'; texto: string }
   | { k: 'zera'; texto: string; llm?: boolean }
-  | { k: 'tools'; chips: Array<{ nome: string; ok?: boolean }> }
+  | { k: 'tools'; chips: Array<{ nome: string; ok?: boolean; erro?: string | null }> }
   | { k: 'card'; bloco: CardChat }
   | { k: 'hitl'; hitl: Hitl; resolvido?: 'sim' | 'nao' }
   | { k: 'guardrail'; camada: string; tipo: string }
@@ -38,14 +65,19 @@ function Card({ bloco, onEnviar }: { bloco: CardChat; onEnviar: (t: string) => v
     case 'raio_x':
       return (
         <div className="card p-3"><Titulo t="Raio-X das dívidas" />
-          {(d.dividas ?? []).map((x: any) => <Linha key={x.divida_id} k={`${x.produto?.replace('_', ' ')} · ${pct(x.taxa_mensal)} a.m.`} v={`${brl0(x.saldo)} (${brl0(x.custo_mensal)}/mês de juros)`} />)}
-          <Linha k="Total devido" v={brl0(d.total_dividas)} /><Linha k="Cresce por mês" v={brl0(d.custo_total_mensal)} />
-          {d.renda_mediana > 0 && <Linha k="Renda típica" v={`${brl0(d.renda_mediana)}/mês`} />}
+          {(d.dividas ?? []).map((x: any) => <Linha key={x.divida_id} k={`${x.produto?.replace('_', ' ')} · ${x.taxa_mensal > 0 ? `${pct(x.taxa_mensal)} a.m.` : 'sem juros'}${x.fonte === 'derivada_extrato' ? ' · estimado do extrato' : ''}`} v={x.taxa_mensal > 0 ? `${brl0(x.saldo)} (${brl0(x.custo_mensal)}/mês de juros)` : x.parcela_atual > 0 ? `${brl0(x.saldo)} (${x.parcelas_restantes}x ${brl(x.parcela_atual)})` : brl0(x.saldo)} />)}
+          <Linha k="Total devido" v={brl0(d.total_dividas)} /><Linha k="Cresce por mês" v={d.custo_total_mensal > 0 ? `${brl0(d.custo_total_mensal)} só de juros` : 'nada — sem juros correndo'} />
+          {d.renda_conhecida === false
+            ? <div className="mt-2 rounded-xl bg-itau-orange-soft/60 px-3 py-2 text-[12px]"><b>Renda não identificada no extrato.</b> Sem ela a zera.ai não calcula sobra nem parcela: me diga quanto entra por mês.</div>
+            : d.renda_media > 0 && <Linha k={d.renda_informada_pela_cliente ? 'Renda (informada por você)' : `Renda média mensal (entradas do extrato, ${d.meses_com_renda} meses)`} v={`${brl0(d.renda_media)}/mês`} />}
         </div>)
     case 'capacidade':
       return (
         <div className="card p-3"><Titulo t="O que cabe no seu mês" />
           <div className="text-[24px] font-extrabold leading-tight">{brl0(d.parcela_maxima)}<span className="text-sm font-medium text-ink-soft">/mês no máximo</span></div>
+          {d.renda_considerada > 0 && <Linha k={d.renda_informada_pela_cliente ? 'Renda informada por você' : 'Renda média mensal (entradas do extrato)'} v={`${brl0(d.renda_considerada)}/mês`} />}
+          {d.essenciais_mediana > 0 && <Linha k="Contas essenciais (extrato)" v={`${brl0(d.essenciais_mediana)}/mês`} />}
+          {d.compromissos_informados > 0 && <Linha k="Gastos fixos informados" v={`${brl0(d.compromissos_informados)}/mês`} />}
           <Linha k="Sobra num mês apertado (P25)" v={brl0(d.sobra_p25)} /><Linha k="Colchão para imprevistos" v={brl0(d.colchao)} />
           <Linha k="Meses fracos" v={(d.meses_fracos ?? []).join(', ') || '—'} /><Linha k="Respiros por ano" v={String(d.respiros_ano ?? 0)} />
         </div>)
@@ -126,7 +158,7 @@ export function Chat({ nome, onSair, onAbrirExperiencia }: { nome: string; onSai
   const push = (it: Item) => setItens((l) => [...l, it])
   function tratar(e: EventoChat) {
     if (e.tipo === 'tool_call') setItens((l) => { const u = l[l.length - 1]; const chip = { nome: e.nome }; return u?.k === 'tools' ? [...l.slice(0, -1), { k: 'tools', chips: [...u.chips, chip] }] : [...l, { k: 'tools', chips: [chip] }] })
-    else if (e.tipo === 'tool_result') setItens((l) => l.map((it) => it.k === 'tools' ? { ...it, chips: it.chips.map((c) => c.nome === e.nome && c.ok === undefined ? { ...c, ok: e.ok } : c) } : it))
+    else if (e.tipo === 'tool_result') setItens((l) => l.map((it) => it.k === 'tools' ? { ...it, chips: it.chips.map((c) => c.nome === e.nome && c.ok === undefined ? { ...c, ok: e.ok, erro: e.erro } : c) } : it))
     else if (e.tipo === 'card') push({ k: 'card', bloco: e.bloco })
     else if (e.tipo === 'texto') push({ k: 'zera', texto: e.texto, llm: true })
     else if (e.tipo === 'hitl') push({ k: 'hitl', hitl: e.hitl })
@@ -160,8 +192,10 @@ export function Chat({ nome, onSair, onAbrirExperiencia }: { nome: string; onSai
         )}
         {itens.map((it, i) => {
           if (it.k === 'cliente') return <div key={i} className="ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-itau-orange text-white px-3 py-2 text-[14px]">{it.texto}</div>
-          if (it.k === 'zera') return <div key={i} className="max-w-[92%] rounded-2xl rounded-bl-md bg-white border border-line px-3 py-2 text-[14px] leading-relaxed whitespace-pre-wrap">{it.texto}{it.llm && <div className="mt-1 text-[10px] text-ink-soft">Gemini · números conferidos com o motor pelos guardrails</div>}</div>
-          if (it.k === 'tools') return <div key={i} className="flex flex-wrap gap-1.5">{it.chips.map((c, j) => <span key={j} className={`chip text-[11px] ${c.ok === false ? 'bg-danger-soft text-danger' : c.ok ? 'bg-ok-soft text-ok' : 'bg-mist text-ink-soft'}`}><Wrench className="h-3 w-3" /> {ROTULO_TOOL[c.nome] ?? c.nome}{c.ok === undefined ? '…' : c.ok ? ' ✓' : ' ✗'}</span>)}</div>
+          if (it.k === 'zera') return <div key={i} className="max-w-[92%] rounded-2xl rounded-bl-md bg-white border border-line px-3 py-2 text-[14px] leading-relaxed"><Texto texto={it.texto} />{it.llm && <div className="mt-1 text-[10px] text-ink-soft">Gemini · números conferidos com o motor pelos guardrails</div>}</div>
+          if (it.k === 'tools') return <div key={i} className="flex flex-wrap gap-1.5">{it.chips.map((c, j) => c.erro === 'renda_desconhecida'
+            ? <span key={j} className="chip text-[11px] bg-itau-orange-soft text-itau-orange"><Wrench className="h-3 w-3" /> {ROTULO_TOOL[c.nome] ?? c.nome}: preciso da sua renda</span>
+            : <span key={j} className={`chip text-[11px] ${c.ok === false ? 'bg-danger-soft text-danger' : c.ok ? 'bg-ok-soft text-ok' : 'bg-mist text-ink-soft'}`}><Wrench className="h-3 w-3" /> {ROTULO_TOOL[c.nome] ?? c.nome}{c.ok === undefined ? '…' : c.ok ? ' ✓' : ' ✗'}</span>)}</div>
           if (it.k === 'card') return <div key={i}><Card bloco={it.bloco} onEnviar={enviar} /></div>
           if (it.k === 'hitl') return <div key={i}><CardHitl hitl={it.hitl} resolvido={it.resolvido} onDecidir={(ok) => decidir(i, it.hitl, ok)} /></div>
           if (it.k === 'guardrail') return <div key={i} className="flex items-center gap-2 rounded-xl bg-itau-blue-soft px-3 py-2 text-[12px] text-itau-blue"><ShieldCheck className="h-4 w-4" /> Guardrail de {it.camada}: <b>{it.tipo.replace(/_/g, ' ')}</b>{it.camada === 'entrada' && ' · modelo não foi chamado'}</div>

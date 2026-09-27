@@ -48,6 +48,8 @@ def features_por_cliente(df: pd.DataFrame) -> pd.DataFrame:
     f = pd.DataFrame({
         "n_meses": g.size(),
         "renda_mediana": g["renda"].median(),
+        "renda_media": g["renda"].mean(),               # média mensal das entradas do histórico (renda oficial do perfil)
+        "meses_com_renda": g["renda"].apply(lambda s: int((s > 0).sum())),
         "cv_renda": (g["renda"].std(ddof=0) / g["renda"].mean().replace(0, float("nan"))).fillna(0.0),
         "saidas_media": g["saidas"].mean(),
         "pct_essenciais": (g["essenciais"].mean() / g["saidas"].mean().replace(0, float("nan"))).fillna(0.0),

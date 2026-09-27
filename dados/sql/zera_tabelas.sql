@@ -93,6 +93,8 @@ SELECT
   ARRAY_AGG(saldo_minimo   ORDER BY anomes) AS saldo_minimo_mensal,
   ARRAY_AGG(saidas         ORDER BY anomes) AS saidas_mensal,
   APPROX_QUANTILES(renda, 4)[OFFSET(2)]     AS renda_mediana,
+  AVG(renda)                                AS renda_media,      -- média mensal das entradas (tipo E) do histórico: a renda do perfil
+  COUNTIF(renda > 0)                        AS meses_com_renda,
   SAFE_DIVIDE(STDDEV(renda), AVG(renda))    AS cv_renda,
   COUNTIF(saldo_minimo < 0)                 AS meses_no_vermelho,
   COUNT(*)                                  AS n_meses,

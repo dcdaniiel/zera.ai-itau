@@ -142,6 +142,28 @@ def _para_float(txt: str) -> float:
     return float(txt.replace(".", "").replace(",", "."))
 
 
+PADRAO_MIL = re.compile(r"(\d+(?:[.,]\d+)?)\s?mil\b", re.IGNORECASE)
+PADRAO_NUMERO_SOLTO = re.compile(r"(?<![\d,.])(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?)(?![\d.,]*%)")
+
+
+def _numeros_ditos(texto: str) -> set[float]:
+    """Valores que a cliente digitou (R$ 2.500 · 2500 · 2,5 mil · 2.500,00): podem aparecer na resposta sem serem
+    'inventados'. Percentuais ficam de fora — esses só vêm das tools."""
+    achados: set[float] = set()
+    for m in PADRAO_MIL.finditer(texto):
+        try:
+            achados.add(round(float(m.group(1).replace(".", "").replace(",", ".")) * 1000, 2))
+        except ValueError:
+            pass
+    sem_mil = PADRAO_MIL.sub(" ", texto)
+    for m in PADRAO_NUMERO_SOLTO.finditer(sem_mil):
+        try:
+            achados.add(_para_float(m.group(1)))
+        except ValueError:
+            pass
+    return {v for v in achados if 0 < v < 10_000_000}
+
+
 def _resposta_fixa(texto: str) -> LlmResponse:
     return LlmResponse(content=types.Content(role="model", parts=[types.Part(text=texto)]))
 
@@ -268,8 +290,12 @@ def guardrail_entrada(callback_context: CallbackContext, llm_request: LlmRequest
         ultima = " ".join(p.text or "" for p in ultima_parts)
         state["ultima_mensagem_usuario"] = ultima
         state["turno_usuario"] = state.get("turno_usuario", 0) + 1
-        # autoriza somente números devolvidos por tools neste turno
+        # autoriza somente números devolvidos por tools neste turno...
         state["ultimos_numeros"] = []
+        # ...e os que a própria cliente digitou agora (renda, gasto): ecoá-los não é inventar
+        ditos = _numeros_ditos(ultima)
+        if ditos:
+            state["ultimos_numeros"] = sorted(ditos)[-600:]
 
     # 1) BLOQUEIO: fortes indícios de pergunta problemática -> resposta fixa, modelo não é chamado
     if ultima and novo_turno:

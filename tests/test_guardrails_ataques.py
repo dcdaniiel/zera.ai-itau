@@ -118,7 +118,8 @@ def test_entrada_bloqueia_ataque_no_meio_da_conversa():
 
 def test_tools_nao_aceitam_cliente_id_do_modelo():
     for fn in tools.TODAS:
-        assert "cliente_id" not in inspect.signature(fn).parameters, fn.__name__
+        func = getattr(fn, "func", fn)   # FunctionTool (HITL nativo) embrulha a função
+        assert "cliente_id" not in inspect.signature(func).parameters, func.__name__
 
 
 @pytest.mark.parametrize("fora_do_dominio", [
@@ -162,8 +163,10 @@ def test_modelo_nao_pode_inventar_consentimento():
         ],
     }
     respostas, estado, llm = _conversa(roteiro, ["quero ver o plano C"])
-    assert estado["bloqueios_consentimento"] == 2
+    # consentimento inventado é bloqueado; fechar_acordo não executa sem a confirmação humana no app (HITL nativo)
+    assert estado["bloqueios_consentimento"] >= 1
     assert not Contexto.para(CLIENTE).estado["consentimentos"]
+    assert Contexto.para(CLIENTE).estado["acordo"] is None
 
 
 def test_negacao_nunca_vira_consentimento():
