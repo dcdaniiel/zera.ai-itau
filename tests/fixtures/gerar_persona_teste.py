@@ -1,11 +1,12 @@
-"""Gera o extrato sintético da persona da demo (Cleide) no schema canônico.
+"""FIXTURE DE TESTE — perfil sintético (Cleide) usado SOMENTE pelos testes automatizados (ZERA_FONTE=fixture).
 
-Uso:  python -m dados.gerar_cleide   (escreve dados/cleide_12m.csv e dados/cleide_dividas.json)
+Uso:  python tests/fixtures/gerar_persona_teste.py   (escreve os fixtures de teste; NÃO é dado da aplicação)
 
 Os números são desenhados para a história da demo:
 - renda irregular (diarista), mediana ≈ 2.325; meses fracos: jan e jul
 - essenciais ≈ 1.550/mês
-- 3 dívidas Itaú: cartão no rotativo, cheque especial, empréstimo com 2 parcelas atrasadas
+- 3 dívidas Itaú: cartão no rotativo (gatilho da demo), cheque especial, empréstimo com 2 parcelas atrasadas
+- Open Finance: sem dívidas de outras instituições no MVP (quadro de produto, item 14)
 """
 
 from __future__ import annotations
@@ -51,7 +52,7 @@ DIVIDAS = [
      "descricao": "Cheque especial em uso há 20 dias", "instituicao": "Itaú"},
     {"divida_id": "dv_emprestimo", "produto": "emprestimo", "saldo": 2700.00, "taxa_mensal": 0.045,
      "dias_atraso": 60, "parcela_atual": 380.00, "parcelas_restantes": 8, "consequencia": "negativacao",
-     "descricao": "Empréstimo pessoal — 2 parcelas de 380 atrasadas", "instituicao": "Outra instituição (Open Finance)"},
+     "descricao": "Empréstimo pessoal Itaú — 2 parcelas de 380 atrasadas", "instituicao": "Itaú"},
 ]
 
 
@@ -102,12 +103,12 @@ def gerar(seed: int = 42) -> tuple[list[dict], list[dict]]:
 
 def main() -> None:
     linhas, dividas = gerar()
-    csv_path = AQUI / "cleide_12m.csv"
+    csv_path = AQUI / "persona_cleide_12m.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(linhas[0].keys()))
         w.writeheader()
         w.writerows(linhas)
-    (AQUI / "cleide_dividas.json").write_text(json.dumps(
+    (AQUI / "persona_cleide_dividas.json").write_text(json.dumps(
         {"cliente_id": CLIENTE_ID, "nome": NOME, "tem_reserva": False, "dia_pagamento_preferido": 10, "dividas": dividas},
         ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"{len(linhas)} transações -> {csv_path.name}; {len(dividas)} dívidas -> cleide_dividas.json")

@@ -14,7 +14,8 @@
       "parcelas_restantes": 0,
       "consequencia": "negativacao",
       "descricao": "Cartão Itaú — 2 ciclos no rotativo",
-      "instituicao": "Itaú"
+      "instituicao": "Itaú",
+      "fonte": "cadastro"
     },
     {
       "divida_id": "dv_cheque",
@@ -26,7 +27,8 @@
       "parcelas_restantes": 0,
       "consequencia": "nenhuma",
       "descricao": "Cheque especial em uso há 20 dias",
-      "instituicao": "Itaú"
+      "instituicao": "Itaú",
+      "fonte": "cadastro"
     },
     {
       "divida_id": "dv_emprestimo",
@@ -37,8 +39,10 @@
       "parcela_atual": 380.0,
       "parcelas_restantes": 8,
       "consequencia": "negativacao",
-      "descricao": "Empréstimo pessoal — 2 parcelas de 380 atrasadas",
-      "instituicao": "Outra instituição (Open Finance)"
+      "descricao": "Empréstimo pessoal Itaú — 2 parcelas de 380 atrasadas",
+      "instituicao": "Itaú",
+      "fonte": "cadastro"
     }
-  ]
+  ],
+  "persona": true
 }

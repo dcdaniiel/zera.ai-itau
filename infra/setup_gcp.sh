@@ -1,31 +1,26 @@
 #!/usr/bin/env bash
-# Prepara o projeto do evento para o Zera (idempotente). Rode uma vez, autenticado:
+# Prepara o projeto do evento para o zera.ai (idempotente). Rode uma vez, autenticado:
 #   gcloud auth login && gcloud auth application-default login
+# Usa SOMENTE serviços já habilitados no projeto (gcloud services list --enabled): BigQuery (+ML), Vertex AI, Cloud Run,
+# Cloud Build, Artifact Registry, Logging, Monitoring, Telemetry (OTLP), Model Armor, Secret Manager, Pub/Sub, Billing Budgets.
 set -euo pipefail
 PROJECT="${GOOGLE_CLOUD_PROJECT:-batalha-time-03-vhxk}"
-REGION="${GOOGLE_CLOUD_LOCATION:-us-central1}"
+REGION="${REGION:-us-central1}"
+gcloud config set project "$PROJECT" >/dev/null
 
-gcloud config set project "$PROJECT"
+echo ">> 1) Camada de dados no BigQuery (tabelas zera.* + clusterização k-means + perfis da demo)"
+python -m dados.publicar_bq
 
-echo ">> APIs"
-gcloud services enable \
-  aiplatform.googleapis.com \
-  run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
-  cloudscheduler.googleapis.com \
-  bigquery.googleapis.com storage.googleapis.com \
-  logging.googleapis.com cloudtrace.googleapis.com secretmanager.googleapis.com \
-  dlp.googleapis.com || true
-# Model Armor pode não estar liberado no projeto do evento; tenta sem falhar
-gcloud services enable modelarmor.googleapis.com 2>/dev/null || echo "(Model Armor não habilitado — guardrails seguem nos callbacks)"
+echo ">> 2) Model Armor: template de guardrails (injeção/jailbreak + dados sensíveis + conteúdo) — ZERA_MODEL_ARMOR=1 liga na API"
+gcloud model-armor templates describe zera-guardrails --location="$REGION" >/dev/null 2>&1 || \
+gcloud model-armor templates create zera-guardrails --location="$REGION" \
+  --pi-and-jailbreak-filter-settings-enforcement=enabled --pi-and-jailbreak-filter-settings-confidence-level=medium-and-above \
+  --basic-config-filter-enforcement=enabled \
+  --rai-settings-filters='[{"filterType":"HATE_SPEECH","confidenceLevel":"MEDIUM_AND_ABOVE"},{"filterType":"HARASSMENT","confidenceLevel":"MEDIUM_AND_ABOVE"},{"filterType":"DANGEROUS","confidenceLevel":"MEDIUM_AND_ABOVE"}]' \
+  2>/dev/null && echo "  template criado" || echo "  (não foi possível criar o template — os guardrails locais dos callbacks continuam ativos)"
 
-echo ">> BigQuery dataset 'zera' (extrato clusterizado, features, perfil, dívidas, estado, eventos) — Firestore não está liberado"
-bq --location="$REGION" ls -d "$PROJECT:zera" >/dev/null 2>&1 || bq --location="$REGION" mk -d "$PROJECT:zera"
-bq query --use_legacy_sql=false --project_id="$PROJECT" < "$(dirname "$0")/../dados/sql/zera_tabelas.sql"
-bq query --use_legacy_sql=false --project_id="$PROJECT" < "$(dirname "$0")/../dados/sql/eventos.sql"
-echo ">> (opcional) agendar a atualização diária de features/perfil:"
-echo "   bq mk --transfer_config --data_source=scheduled_query --display_name='zera features' --schedule='every 24 hours' --params='{\"query\":\"...\"}'"
-
-echo ">> Bucket de staging"
-gsutil ls -b "gs://$PROJECT-zera" >/dev/null 2>&1 || gsutil mb -l "$REGION" "gs://$PROJECT-zera"
-
-echo ">> Pronto. Copie zera_agent/.env.example para zera_agent/.env e rode: adk web"
+echo ">> 3) Segredos (opcional): chaves de terceiros nunca em env — ex.: gcloud secrets create zera-openfinance-key --data-file=-"
+echo ">> 4) Scheduled query diária (BigQuery Data Transfer) para refazer features/perfis/clusters — exemplo:"
+echo "   bq mk --transfer_config --project_id=$PROJECT --data_source=scheduled_query --display_name='zera dados' --schedule='every 24 hours' \\"
+echo "      --params='{\"query\":\"CALL ... ou o conteúdo de dados/sql/zera_tabelas.sql renderizado\"}'"
+echo ">> 5) Deploy: infra/deploy_app.sh   |   Observabilidade/FinOps: infra/observabilidade.sh"

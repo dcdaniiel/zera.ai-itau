@@ -10,3 +10,5 @@ docs
 tests
 infra
 zera_agent/.env
+zera_agent/env.demo
+

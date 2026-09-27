@@ -27,15 +27,23 @@ class Divida:
     parcelas_restantes: int = 0
     consequencia: str = "nenhuma"  # negativacao | corte_servico | garantia | nenhuma
     descricao: str = ""
-    instituicao: str = "Itaú"      # dívidas de outras instituições entram via Open Finance
+    instituicao: str = "Itaú"      # dívidas de outras instituições entram via Open Finance (só quitar/manter no MVP)
+    fonte: str = "cadastro"        # cadastro | derivada_extrato | open_finance_simulado  (a interface rotula o que é simulado)
 
     @property
     def custo_mensal(self) -> float:
+        """Juros que correm por mês sobre o saldo (o que a dívida custa se nada mudar)."""
         return r2(self.saldo * self.taxa_mensal)
+
+    @property
+    def rotativo(self) -> bool:
+        """Sem parcela definida (rotativo/cheque): não tem prazo para acabar."""
+        return not (self.parcela_atual and self.parcelas_restantes)
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["custo_mensal"] = self.custo_mensal
+        d["rotativo"] = self.rotativo
         return d
 
 
@@ -50,6 +58,9 @@ class PerfilFinanceiro:
     dividas: list[Divida]
     tem_reserva: bool = False
     dia_pagamento_preferido: int = 10
+    persona: bool = False              # True = persona sintética da demo (rotulada na interface)
+    fonte: str = "csv"                 # csv | bigquery
+    renda_informada: float | None = None   # renda confirmada pela cliente quando o extrato não traz entradas
 
     @property
     def sobra_mensal(self) -> list[float]:
@@ -57,7 +68,12 @@ class PerfilFinanceiro:
 
     @property
     def renda_mediana(self) -> float:
-        return r2(median(self.renda_mensal))
+        return r2(median(self.renda_mensal)) if self.renda_mensal else 0.0
+
+    @property
+    def renda_desconhecida(self) -> bool:
+        """Extrato sem entradas de renda (dados insuficientes): a experiência pergunta antes de calcular."""
+        return self.renda_mediana <= 0 and self.renda_informada is None
 
     @property
     def essenciais_mediana(self) -> float:
@@ -91,6 +107,10 @@ class PerfilFinanceiro:
             "custo_total_mensal": self.custo_total_mensal,
             "tem_reserva": self.tem_reserva,
             "dia_pagamento_preferido": self.dia_pagamento_preferido,
+            "persona": self.persona,
+            "fonte": self.fonte,
+            "renda_informada": self.renda_informada,
+            "renda_desconhecida": self.renda_desconhecida,
         }
 
 

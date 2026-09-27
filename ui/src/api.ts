@@ -1,11 +1,20 @@
-/* Cliente HTTP da API zera.ai (api/main.py). Sem mock: toda tela vem do backend (núcleo determinístico + agente).
+/* Cliente HTTP da API zera.ai (api/main.py). Sem mock: toda tela vem do backend (núcleo determinístico + agente + BigQuery).
    Em dev, /api é proxied pelo Vite para http://localhost:8080; em produção a própria API serve a UI (mesma origem). */
 
-import type { Acao, EstadoDemo, Preferencias, Resposta } from './types'
+import type { Acao, Clientes, EstadoDemo, Perfil, Preferencias, Resposta } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? '/api' : '')
-export const CLIENTE_ID = import.meta.env.VITE_CLIENTE_ID ?? 'cli_001'
 const SESSAO_ID = `ui-${Math.random().toString(36).slice(2, 8)}`
+
+/** cliente selecionado na tela de perfis (persistido na URL: ?cliente=...) */
+let clienteId: string = new URLSearchParams(window.location.search).get('cliente') ?? import.meta.env.VITE_CLIENTE_ID ?? ''
+export const getCliente = () => clienteId
+export function setCliente(id: string) {
+  clienteId = id
+  const url = new URL(window.location.href)
+  url.searchParams.set('cliente', id)
+  window.history.replaceState({}, '', url.toString())
+}
 
 export class ApiError extends Error {
   status?: number
@@ -29,21 +38,25 @@ async function req<T>(path: string, init?: RequestInit, timeoutMs = 60_000): Pro
 function comoErro(e: unknown, state: Resposta['state'] = 'ERROR'): Resposta {
   const msg = e instanceof Error ? e.message : String(e)
   return { state, response_type: 'ERROR', content: { title: 'Não consegui concluir esta etapa agora.', description: 'Nenhum valor foi inventado. Você pode tentar de novo em instantes ou falar com uma pessoa do time.' },
-    options: [], quick_replies: [], allowed_actions: ['RETRY', 'ESCALATE'], requires_confirmation: false, error: msg }
+    options: [], quick_replies: [{ id: 'RETRY', label: 'Tentar de novo', acao: 'RETRY' }, { id: 'ESCALATE', label: 'Falar com uma pessoa', acao: 'ESCALATE' }],
+    allowed_actions: ['RETRY', 'ESCALATE', 'HOME'], requires_confirmation: false, error: msg }
 }
 
-const base = `/v1/clientes/${CLIENTE_ID}`
+const base = () => `/v1/clientes/${encodeURIComponent(clienteId)}`
 
 export const api = {
-  health: () => req<{ ok: boolean; modelo: string }>('/health', undefined, 8_000),
-  preferencias: (p: Preferencias) => req<{ ok: boolean }>(`${base}/preferencias`, { method: 'POST', body: JSON.stringify(p) }),
-  proativa: () => req<Resposta>(`${base}/proativa`),
-  experiencia: async (): Promise<Resposta> => { try { return await req<Resposta>(`${base}/experiencia`) } catch (e) { return comoErro(e) } },
+  health: () => req<{ ok: boolean; modelo: string; fonte: string; versao: string }>('/health', undefined, 8_000),
+  clientes: () => req<Clientes>('/v1/clientes', undefined, 30_000),
+  perfil: () => req<Perfil>(`${base()}/perfil`),
+  preferencias: (p: Preferencias) => req<{ ok: boolean }>(`${base()}/preferencias`, { method: 'POST', body: JSON.stringify(p) }),
+  proativa: () => req<Resposta>(`${base()}/proativa`),
+  experiencia: async (): Promise<Resposta> => { try { return await req<Resposta>(`${base()}/experiencia`) } catch (e) { return comoErro(e) } },
   evento: async (acao: Acao, payload: Record<string, unknown> = {}): Promise<Resposta> => {
-    try { return await req<Resposta>(`${base}/experiencia/evento`, { method: 'POST', body: JSON.stringify({ acao, payload, sessao_id: SESSAO_ID }) }) }
+    try { return await req<Resposta>(`${base()}/experiencia/evento`, { method: 'POST', body: JSON.stringify({ acao, payload, sessao_id: SESSAO_ID }) }) }
     catch (e) { return comoErro(e) }
   },
-  estado: () => req<EstadoDemo>(`/gatilhos/${CLIENTE_ID}`),
-  simularTempo: (ate: string) => req<EstadoDemo>('/simular_tempo', { method: 'POST', body: JSON.stringify({ cliente_id: CLIENTE_ID, ate }) }),
-  reset: () => req<unknown>(`/reset/${CLIENTE_ID}`, { method: 'POST' }),
+  estado: () => req<EstadoDemo>(`/gatilhos/${encodeURIComponent(clienteId)}`),
+  simularTempo: (ate: string) => req<EstadoDemo>('/simular_tempo', { method: 'POST', body: JSON.stringify({ cliente_id: clienteId, ate }) }),
+  reset: () => req<unknown>(`/reset/${encodeURIComponent(clienteId)}`, { method: 'POST' }),
+  metrics: () => req<any>('/metrics', undefined, 8_000),
 }

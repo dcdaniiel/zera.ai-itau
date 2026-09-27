@@ -32,8 +32,9 @@ def pasta_estado() -> Path:
 
 # Roteiro da demo: eventos que o "avançar tempo" injeta (dinheiro extra etc.)
 ROTEIRO_DEMO: list[dict] = [
-    # a anomalia que abre a jornada: entrada extra no dia da demo (13º / renda extra)
-    {"a_partir_de": HOJE_INICIAL, "tipo": "credito", "valor": 2800.00, "descricao": "PIX RECEBIDO - RENDA EXTRA", "recorrente": False},
+    # O gatilho que abre a jornada no dia da demo é a ENTRADA NO ROTATIVO (detectada no extrato/cadastro — quadro item 11).
+    # Os eventos abaixo entram quando o relógio avança: dinheiro extra vira entrada/amortização.
+    {"a_partir_de": "2026-12-05", "tipo": "credito", "valor": 2800.00, "descricao": "PIX RECEBIDO - 13 SALARIO / RENDA EXTRA", "recorrente": False},
     {"a_partir_de": "2027-05-01", "tipo": "credito", "valor": 1400.00, "descricao": "RESTITUICAO IRPF", "recorrente": False},
 ]
 
@@ -124,10 +125,13 @@ class Contexto:
         self.repo = repositorio()
         self.politica = carregar_politica()
         self.perfil, self._df = carregar_perfil(cliente_id)
+        self._renda_base = list(self.perfil.renda_mensal)
+        self._compromissos_base = list(self.perfil.compromissos_mensal)
         self.capacidade = calcular_capacidade(self.perfil, self.politica)
         self.estado: dict[str, Any] = self.repo.ler(cliente_id) or self._estado_inicial()
         self.estado.setdefault("compromissos_extras", [])
-        self._compromissos_base = list(self.perfil.compromissos_mensal)
+        self.estado.setdefault("memoria", {})
+        self._aplicar_renda_informada()
         self._aplicar_compromissos()
 
     @classmethod
@@ -158,14 +162,41 @@ class Contexto:
             "compromissos_extras": [],   # gastos importantes informados pelo cliente que não aparecem no extrato
         }
 
-    # --- compromissos informados pelo cliente (tela "Antes de calcular, preciso confirmar uma coisa") ---
+    # --- informações confirmadas pela cliente (quadro de produto, item 14: dados internos + o que ela confirma) ---
     def adicionar_compromisso(self, descricao: str, valor_mensal: float) -> dict:
+        """Tela "Vamos considerar esse gasto": gasto fixo fora do extrato -> reduz a sobra e recalcula a capacidade."""
         item = {"descricao": descricao, "valor_mensal": round(float(valor_mensal), 2), "data": self.estado["hoje"]}
         self.estado.setdefault("compromissos_extras", []).append(item)
         self._aplicar_compromissos()
         self.salvar()
         self.registrar_evento("compromisso_informado", item)
         return item
+
+    def remover_compromissos(self) -> None:
+        self.estado["compromissos_extras"] = []
+        self._aplicar_compromissos()
+        self.salvar()
+        self.registrar_evento("compromissos_removidos", {})
+
+    def informar_renda(self, valor_mensal: float) -> None:
+        """Extrato sem entradas de renda (dados insuficientes): a cliente informa um valor aproximado, uma vez."""
+        self.estado.setdefault("memoria", {})["renda_informada"] = round(float(valor_mensal), 2)
+        self._aplicar_renda_informada()
+        self._aplicar_compromissos()
+        self.salvar()
+        self.registrar_evento("renda_informada", {"valor": round(float(valor_mensal), 2)})
+
+    def _aplicar_renda_informada(self) -> None:
+        base = getattr(self, "_renda_base", None)
+        if base is None:
+            self._renda_base = list(self.perfil.renda_mensal)
+            base = self._renda_base
+        valor = (self.estado.get("memoria") or {}).get("renda_informada")
+        if valor and (not any(base) or self.perfil.renda_informada is not None):
+            self.perfil.renda_informada = float(valor)
+            self.perfil.renda_mensal = [float(valor)] * len(self.perfil.meses)
+        else:
+            self.perfil.renda_mensal = list(base)
 
     def _aplicar_compromissos(self) -> None:
         """Compromissos extras entram em todos os meses e reduzem a sobra; a capacidade é recalculada."""
@@ -206,6 +237,8 @@ class Contexto:
     def resetar(self) -> None:
         self.repo.apagar(self.cliente_id)
         self.estado = self._estado_inicial()
+        self.perfil.renda_informada = None
+        self._aplicar_renda_informada()
         self._aplicar_compromissos()
         self.salvar()
 

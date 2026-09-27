@@ -77,14 +77,14 @@ def test_consentimento_bloqueia_e_libera():
         "sim, confirmo o plano C": [
             ("call", "registrar_consentimento", {"acao": "fechar_acordo", "frase_cliente": "sim, confirmo o plano C"}),
             ("call", "fechar_acordo", {"plano_id": "C"}),
-            ("text", "Fechado: 25x de R$ 301,94, primeira parcela em 10/10."),
+            ("text", "Fechado: 29x de R$ 303,04, primeira parcela em 10/10."),
         ],
     }
     runner, llm = _runner(roteiro)
     respostas, estado = asyncio.run(_conversar(runner, ["quero o plano C", "sim, confirmo o plano C"]))
     assert estado["bloqueios_consentimento"] == 1
     ctx = Contexto.para(CLIENTE)
-    assert ctx.acordo is not None and ctx.acordo.status == "ativo" and ctx.acordo.parcela == 301.94
+    assert ctx.acordo is not None and ctx.acordo.status == "ativo" and ctx.acordo.parcela == 303.04
     assert ctx.estado["consentimentos"][0]["frase_cliente"] == "sim, confirmo o plano C"
     assert estado["consentimento"] == {}             # consentimento é de uso único
     assert estado["alucinacao_numerica"] == 0 if "alucinacao_numerica" in estado else True
@@ -97,12 +97,12 @@ def test_gatilho_de_respiro_apos_avancar_tempo():
     sim = simular_planos(ctx.perfil, ctx.capacidade, ctx.politica)
     ctx.salvar(criar_acordo(ctx.perfil, next(p for p in sim["planos"] if p["id"] == "C"), ctx.hoje))
     res = ctx.avancar_tempo(date(2027, 1, 7))
-    assert [g["tipo"] for g in res["gatilhos"]] == ["risco_parcela"]
+    assert [g["tipo"] for g in res["gatilhos"]] == ["risco_parcela", "dinheiro_extra"]   # 13º entrou em dezembro (roteiro da demo)
 
     roteiro = {
         "oi": [
             ("call", "status_acordo", {}),
-            ("text", "Cleide, janeiro está apertado (sobra prevista R$ 200,00) e a parcela de R$ 301,94 vence dia 10. "
+            ("text", "Cleide, janeiro está apertado (sobra prevista R$ 200,00) e a parcela de R$ 303,04 vence dia 10. "
                      "Quer usar 1 dos seus 2 respiros?"),
         ],
         "quero sim": [

@@ -1,13 +1,17 @@
-"""Carrega o extrato (CSV local ou BigQuery) e monta o PerfilFinanceiro no schema canônico.
-
-Schema canônico de transações:
-    cliente_id, data (YYYY-MM-DD), descricao, valor (>0), tipo (credito|debito),
-    categoria, essencial (bool), recorrente (bool)
+"""Carrega o perfil financeiro do cliente (BigQuery ou CSV local) no schema canônico do motor.
 
 Fontes (env ZERA_FONTE):
-    csv       -> dados/cleide_12m.csv + dados/cleide_dividas.json (padrão; persona da demo)
-    bigquery  -> 1) `zera.perfil_cliente` + `zera.dividas_derivadas` (agregado, 1 query por sessão — dados/sql/zera_tabelas.sql)
-                 2) fallback: extrato bruto `hackathon_dados.extrato_sintetico` clusterizado por id_usuario + derivar_dividas()
+    bigquery  -> `zera.perfil_cliente` (12 meses em arrays) + `zera.dividas_derivadas` + `zera.clusters_clientes` (segmento).
+                 1 query por sessão. Fallback: extrato bruto `zera.extrato` (ou hackathon_dados.extrato_sintetico) + derivar_dividas().
+                 Perfis disponíveis: `zera.perfis_demo` = clientes reais do cluster-alvo (BigQuery ML k-means), o mais típico
+                 (medoide) recebe o nome da persona do quadro de produto.
+    amostra   -> dados/amostra_bq_extrato_sintetico.csv (export real da base do evento, 10k lançamentos) + segmentação por
+                 regras (dados/segmentacao.py). Para rodar local sem credenciais. Nenhum dado sintético.
+    fixture   -> tests/fixtures/ (perfil sintético usado SOMENTE pelos testes automatizados).
+
+Nada é inventado: quando o extrato não traz renda, o perfil sai com `renda_desconhecida=True` e a experiência
+pergunta antes de calcular (dados insuficientes — quadro de produto, item 13). Dívidas derivadas do extrato são
+rotuladas `fonte=derivada_extrato` e a interface mostra "estimado do extrato".
 """
 
 from __future__ import annotations
@@ -22,6 +26,9 @@ import pandas as pd
 from motor.modelos import Divida, PerfilFinanceiro, r2
 
 AQUI = Path(__file__).parent
+FIXTURES = AQUI.parent / "tests" / "fixtures"
+AMOSTRA = AQUI / "amostra_bq_extrato_sintetico.csv"
+MAX_PERFIS = int(os.getenv("ZERA_MAX_PERFIS", "12"))
 
 PROJETO = os.getenv("GOOGLE_CLOUD_PROJECT", "batalha-time-03-vhxk")
 DATASET = os.getenv("ZERA_BQ_DATASET", "hackathon_dados")
@@ -31,31 +38,24 @@ DATASET_ZERA = os.getenv("ZERA_BQ_DATASET_ZERA", "zera")
 # taxas fictícias usadas quando a dívida é derivada do extrato (sem cadastro de dívidas na base do evento)
 TAXAS_DERIVADAS = {"cheque_especial": 0.08, "cartao_rotativo": 0.14, "emprestimo": 0.045, "crediario": 0.0}
 
-# Schema real de `hackathon_dados.extrato_sintetico` (visto em 26/09): coluna canônica -> coluna da tabela
-#   id_usuario, anomesdia (TIMESTAMP), anomes (INT), tipo (S = saída, E = entrada), descr, vlr,
-#   nom_cate_macro, nom_cate_micro, saldo_apos, parcela_atual, parcela_total
+# Schema real de `hackathon_dados.extrato_sintetico`: coluna canônica -> coluna da tabela
 MAPEAMENTO_COLUNAS = {
-    "cliente_id": "id_usuario",
-    "data": "anomesdia",
-    "descricao": "descr",
-    "valor": "vlr",
-    "tipo": "tipo",
-    "categoria": "nom_cate_macro",
-    "subcategoria": "nom_cate_micro",
-    "saldo_apos": "saldo_apos",
-    "parcela_atual": "parcela_atual",
-    "parcela_total": "parcela_total",
+    "cliente_id": "id_usuario", "data": "anomesdia", "descricao": "descr", "valor": "vlr", "tipo": "tipo",
+    "categoria": "nom_cate_macro", "subcategoria": "nom_cate_micro", "saldo_apos": "saldo_apos",
+    "parcela_atual": "parcela_atual", "parcela_total": "parcela_total",
 }
-
-# categorias essenciais (fallback quando a base não traz a flag)
-CATEGORIAS_ESSENCIAIS = {"moradia", "aluguel", "contas", "energia", "agua", "gas", "alimentacao", "mercado",
-                         "supermercado", "transporte", "telefone", "saude", "farmacia", "educacao",
-                         # macro-categorias da base do evento
-                         "casa", "transporte publico", "posto de combustivel", "educacao", "contas e servicos", "saude"}
-# micro-categorias claramente não essenciais dentro de macros essenciais (ex.: Casa > Jardinagem)
+CATEGORIAS_ESSENCIAIS = {"moradia", "aluguel", "contas", "energia", "agua", "gas", "alimentacao", "mercado", "supermercado",
+                         "transporte", "telefone", "saude", "farmacia", "educacao",
+                         "casa", "transporte publico", "posto de combustivel", "contas e servicos"}
 MICRO_NAO_ESSENCIAIS = {"jardinagem", "lavanderia"}
 PADRAO_RENDA = re.compile(r"(?:SALARIO|SAL[ÁA]RIO|PIX RECEBIDO|TED RECEBIDA|PAGAMENTO RECEBIDO|DIARIA|PROVENTO)", re.I)
 PADRAO_DIVIDA = re.compile(r"(?:JUROS|PARCELA|FATURA|EMPRESTIMO|EMPR[ÉE]STIMO|MINIMO|M[ÍI]NIMO|ROTATIVO|CHEQUE ESPECIAL)", re.I)
+CAMPOS_DIVIDA = set(Divida.__dataclass_fields__)
+
+
+def fonte() -> str:
+    f = os.getenv("ZERA_FONTE", "amostra")
+    return "amostra" if f == "csv" else f
 
 
 # ---------- normalização ----------
@@ -66,17 +66,14 @@ def normalizar(df: pd.DataFrame) -> pd.DataFrame:
     df["valor"] = pd.to_numeric(df["valor"], errors="coerce").abs()
     if "tipo" not in df.columns:
         df["tipo"] = "debito"
-    # base do evento: S = saída (débito), E = entrada (crédito)
     df["tipo"] = df["tipo"].astype(str).str.lower().map(lambda t: "credito" if t.startswith(("c", "e", "+")) else "debito")
     if "categoria" not in df.columns:
         df["categoria"] = "outros"
     df["categoria"] = df["categoria"].astype(str).str.lower().str.strip()
     if "descricao" not in df.columns:
         df["descricao"] = ""
-    # renda: créditos com cara de renda (ou categoria renda)
     renda_mask = (df["tipo"] == "credito") & (df["categoria"].isin({"renda", "salario", "salário"}) | df["descricao"].astype(str).str.contains(PADRAO_RENDA))
     df.loc[renda_mask, "categoria"] = "renda"
-    # dívida: débitos de juros/parcelas
     divida_mask = (df["tipo"] == "debito") & (df["categoria"].isin({"divida", "dívida"}) | df["descricao"].astype(str).str.contains(PADRAO_DIVIDA))
     df.loc[divida_mask, "categoria"] = "divida"
     if "subcategoria" in df.columns:
@@ -85,7 +82,6 @@ def normalizar(df: pd.DataFrame) -> pd.DataFrame:
         df["essencial"] = (df["tipo"] == "debito") & df["categoria"].isin(CATEGORIAS_ESSENCIAIS)
         if "subcategoria" in df.columns:
             df.loc[df["subcategoria"].isin(MICRO_NAO_ESSENCIAIS), "essencial"] = False
-        # Mercado da base é macro "mercado" (já coberto); delivery/restaurantes ficam fora da sobra
     df["essencial"] = df["essencial"].astype(str).str.lower().isin({"true", "1", "sim", "yes"}) if df["essencial"].dtype == object else df["essencial"].astype(bool)
     if "recorrente" not in df.columns:
         df["recorrente"] = df["categoria"].isin({"renda"} | CATEGORIAS_ESSENCIAIS)
@@ -95,50 +91,130 @@ def normalizar(df: pd.DataFrame) -> pd.DataFrame:
 
 # ---------- fontes ----------
 
-def carregar_csv(path: Path | None = None) -> pd.DataFrame:
-    return normalizar(pd.read_csv(path or AQUI / "cleide_12m.csv"))
+_cache_amostra: pd.DataFrame | None = None
+
+
+def carregar_amostra() -> pd.DataFrame:
+    """Export real de `hackathon_dados.extrato_sintetico` (mesmo schema da tabela), normalizado uma vez por processo."""
+    global _cache_amostra
+    if _cache_amostra is None:
+        _cache_amostra = normalizar(pd.read_csv(AMOSTRA))
+    return _cache_amostra
+
+
+def carregar_fixture() -> pd.DataFrame:
+    return normalizar(pd.read_csv(FIXTURES / "persona_cleide_12m.csv"))
+
+
+def _bq():
+    from google.cloud import bigquery  # import tardio: só quando a fonte é BigQuery
+
+    return bigquery, bigquery.Client(project=PROJETO)
+
+
+def _query(sql: str, **params) -> list[dict]:
+    bigquery, client = _bq()
+    tipos = {str: "STRING", int: "INT64", float: "FLOAT64"}
+    qp = [bigquery.ScalarQueryParameter(k, tipos[type(v)], v) for k, v in params.items()]
+    job = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=qp))
+    return [dict(row) for row in job.result()]
 
 
 def carregar_bigquery(cliente_id: str, meses: int = 12) -> pd.DataFrame:
-    from google.cloud import bigquery  # import tardio: só quando a fonte é BigQuery
+    """Fallback: extrato bruto (clusterizado por id_usuario) — 1 query, sem depender de db-dtypes."""
+    tabela = f"`{PROJETO}.{DATASET_ZERA}.extrato`"
+    try:
+        linhas = _query(f"""
+            SELECT id_usuario, TIMESTAMP(dia) AS anomesdia, descr, vlr, tipo, macro AS nom_cate_macro, micro AS nom_cate_micro,
+                   saldo_apos, parcela_atual, parcela_total
+            FROM {tabela}
+            WHERE id_usuario = @cliente_id
+              AND dia >= DATE_SUB((SELECT MAX(dia) FROM {tabela} WHERE id_usuario = @cliente_id), INTERVAL @meses MONTH)
+            ORDER BY dia""", cliente_id=cliente_id, meses=meses)
+    except Exception:  # tabela unificada ainda não publicada: lê a do evento
+        col = MAPEAMENTO_COLUNAS
+        tabela = f"`{PROJETO}.{DATASET}.{TABELA}`"
+        linhas = _query(f"""
+            SELECT * FROM {tabela}
+            WHERE {col['cliente_id']} = @cliente_id
+              AND DATE({col['data']}) >= DATE_SUB((SELECT MAX(DATE({col['data']})) FROM {tabela} WHERE {col['cliente_id']} = @cliente_id), INTERVAL @meses MONTH)
+            ORDER BY {col['data']}""", cliente_id=cliente_id, meses=meses)
+    if not linhas:
+        raise LookupError(f"cliente {cliente_id} não encontrado no BigQuery")
+    return normalizar(pd.DataFrame(linhas))
 
-    client = bigquery.Client(project=PROJETO)
-    col = MAPEAMENTO_COLUNAS
-    sql = f"""
-        SELECT *
-        FROM `{PROJETO}.{DATASET}.{TABELA}`
-        WHERE {col['cliente_id']} = @cliente_id
-          AND DATE({col['data']}) >= DATE_SUB((SELECT MAX(DATE({col['data']})) FROM `{PROJETO}.{DATASET}.{TABELA}`), INTERVAL @meses MONTH)
-        ORDER BY {col['data']}
-    """
-    job = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
-        bigquery.ScalarQueryParameter("cliente_id", "STRING", cliente_id),
-        bigquery.ScalarQueryParameter("meses", "INT64", meses),
-    ]))
-    return normalizar(job.result().to_dataframe())
+
+def carregar_bigquery_agregado(cliente_id: str) -> dict | None:
+    """Caminho rápido: 1 query em `zera.perfil_cliente` + dívidas derivadas + nome/ordem em perfis_demo + cluster."""
+    z = f"{PROJETO}.{DATASET_ZERA}"
+    linhas = _query(f"""
+        SELECT p.meses, p.renda_mensal, p.essenciais_mensal, p.parcelas_mensal, p.renda_conhecida, p.cv_renda, p.meses_no_vermelho,
+               (SELECT AS STRUCT k.cluster, k.distancia FROM `{z}.clusters_clientes` k WHERE k.id_usuario = p.id_usuario) AS segmento,
+               (SELECT AS STRUCT d.nome, d.ordem, d.medoide FROM `{z}.perfis_demo` d WHERE d.id_usuario = p.id_usuario) AS demo,
+               ARRAY(SELECT AS STRUCT divida_id, produto, saldo, taxa_mensal, dias_atraso, parcela_atual, parcelas_restantes, consequencia,
+                            descricao, instituicao, fonte
+                     FROM `{z}.dividas_derivadas` d WHERE d.id_usuario = p.id_usuario) AS derivadas
+        FROM `{z}.perfil_cliente` p
+        WHERE p.id_usuario = @cliente_id""", cliente_id=cliente_id)
+    if not linhas:
+        return None
+    row = linhas[0]
+    demo = dict(row["demo"]) if row.get("demo") else {}
+    return {"meses": list(row["meses"]), "renda_mensal": [float(x or 0) for x in row["renda_mensal"]],
+            "essenciais_mensal": [float(x or 0) for x in row["essenciais_mensal"]],
+            "parcelas_mensal": [float(x or 0) for x in row["parcelas_mensal"]], "renda_conhecida": bool(row.get("renda_conhecida")),
+            "nome": demo.get("nome"), "medoide": bool(demo.get("medoide")), "segmento": dict(row["segmento"]) if row.get("segmento") else None,
+            "dividas": [dict(d) for d in (row.get("derivadas") or [])]}
 
 
-def carregar_bigquery_agregado(cliente_id: str) -> tuple[dict | None, list[dict]]:
-    """Caminho rápido: 1 query em `zera.perfil_cliente` (arrays de 12 meses) + dívidas derivadas. None se não existir."""
-    from google.cloud import bigquery
+def listar_clientes() -> list[dict]:
+    """Perfis disponíveis para a demo: clientes REAIS do segmento-alvo. bigquery: `perfis_demo` (k-means);
+    amostra: segmentação por regras sobre o export; fixture: o perfil sintético de teste."""
+    f = fonte()
+    if f == "bigquery":
+        z = f"{PROJETO}.{DATASET_ZERA}"
+        linhas = _query(f"""SELECT id_usuario, nome, medoide, cluster, distancia, renda_mediana, renda_conhecida, total_dividas, qtd_dividas,
+                                   meses_no_vermelho, sinais, ordem
+                            FROM `{z}.perfis_demo` ORDER BY ordem""")
+        return [{"cliente_id": r["id_usuario"], "nome": r["nome"], "persona": False, "medoide": bool(r["medoide"]), "cluster": r["cluster"],
+                 "distancia": r["distancia"], "renda_mediana": r2(r["renda_mediana"] or 0), "renda_conhecida": bool(r["renda_conhecida"]),
+                 "total_dividas": r2(r["total_dividas"] or 0), "qtd_dividas": int(r["qtd_dividas"] or 0), "meses_no_vermelho": r["meses_no_vermelho"],
+                 "sinais": r["sinais"], "fonte_dividas": "derivada_extrato", "fonte": "bigquery", "segmentacao": "k-means (BigQuery ML)"} for r in linhas]
+    if f == "fixture":
+        meta = carregar_dividas_json()
+        p, _ = carregar_perfil(meta["cliente_id"])
+        return [{"cliente_id": p.cliente_id, "nome": p.nome, "persona": True, "medoide": False, "cluster": None, "distancia": None,
+                 "renda_mediana": p.renda_mediana, "renda_conhecida": not p.renda_desconhecida, "total_dividas": p.total_dividas,
+                 "qtd_dividas": len(p.dividas), "meses_no_vermelho": None, "sinais": "fixture de teste", "fonte_dividas": "cadastro",
+                 "fonte": "fixture", "segmentacao": "nenhuma (fixture)"}]
+    from dados.segmentacao import features_por_cliente, pseudonimo, score_endividamento, sinais_de
 
-    client = bigquery.Client(project=PROJETO)
-    sql = f"""
-        SELECT p.meses, p.renda_mensal, p.essenciais_mensal, p.parcelas_mensal, p.cv_renda, p.meses_no_vermelho,
-               ARRAY(SELECT AS STRUCT divida_id, produto, saldo, taxa_mensal, dias_atraso, consequencia, descricao
-                     FROM `{PROJETO}.{DATASET_ZERA}.dividas_derivadas` d WHERE d.id_usuario = p.id_usuario) AS dividas
-        FROM `{PROJETO}.{DATASET_ZERA}.perfil_cliente` p
-        WHERE p.id_usuario = @cliente_id
-    """
-    job = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
-        bigquery.ScalarQueryParameter("cliente_id", "STRING", cliente_id)]))
-    for row in job.result():
-        perfil = {"meses": list(row["meses"]), "renda_mensal": [float(x) for x in row["renda_mensal"]],
-                  "essenciais_mensal": [float(x) for x in row["essenciais_mensal"]],
-                  "parcelas_mensal": [float(x) for x in row["parcelas_mensal"]]}
-        dividas = [dict(d) for d in row["dividas"]]
-        return perfil, dividas
-    return None, []
+    df = carregar_amostra()
+    feats = features_por_cliente(df)
+    feats["score"] = score_endividamento(feats)
+    feats = feats.sort_values("score", ascending=False)
+    perfis = []
+    for cid, row in feats.iterrows():
+        dividas = derivar_dividas(df, str(cid))
+        if not dividas:
+            continue
+        ordem = len(perfis) + 1
+        renda_conhecida = bool(row["renda_mediana"] > 0)
+        perfis.append({"cliente_id": str(cid), "nome": pseudonimo(str(cid), ordem), "persona": False, "medoide": ordem == 1, "cluster": None,
+                       "distancia": None, "renda_mediana": r2(row["renda_mediana"]), "renda_conhecida": renda_conhecida,
+                       "total_dividas": r2(sum(d["saldo"] for d in dividas)), "qtd_dividas": len(dividas),
+                       "meses_no_vermelho": int(row["meses_no_vermelho"]), "sinais": sinais_de(row, renda_conhecida),
+                       "fonte_dividas": "derivada_extrato", "fonte": "amostra", "segmentacao": "regras (amostra local)",
+                       "score": r2(row["score"])})
+        if len(perfis) >= MAX_PERFIS:
+            break
+    return perfis
+
+
+def perfil_clusters() -> list[dict]:
+    if fonte() != "bigquery":
+        return []
+    return _query(f"SELECT * FROM `{PROJETO}.{DATASET_ZERA}.perfil_clusters` ORDER BY cluster")
 
 
 def derivar_dividas(df: pd.DataFrame, cliente_id: str) -> list[dict]:
@@ -149,81 +225,96 @@ def derivar_dividas(df: pd.DataFrame, cliente_id: str) -> list[dict]:
     ultimo = d["mes"].max()
     u = d[d["mes"] == ultimo]
     dividas: list[dict] = []
+    base = {"instituicao": "Itaú", "fonte": "derivada_extrato"}
     if "saldo_apos" in u.columns and (u["saldo_apos"] < 0).any():
-        dividas.append({"divida_id": "dv_cheque_especial", "produto": "cheque_especial", "saldo": r2(-u["saldo_apos"].min()),
+        dividas.append({**base, "divida_id": "dv_cheque_especial", "produto": "cheque_especial", "saldo": r2(-u["saldo_apos"].min()),
                         "taxa_mensal": TAXAS_DERIVADAS["cheque_especial"], "dias_atraso": 0, "consequencia": "nenhuma",
-                        "descricao": "saldo negativo no último mês"})
+                        "descricao": "saldo negativo no último mês (estimado a partir do extrato)"})
     if "parcela_total" in u.columns:
         pr = u[u["parcela_total"].notna()]
         if not pr.empty:
             saldo = (pr["valor"] * (pr["parcela_total"] - pr["parcela_atual"].fillna(1) + 1)).sum()
-            dividas.append({"divida_id": "dv_crediario", "produto": "crediario", "saldo": r2(saldo),
+            dividas.append({**base, "divida_id": "dv_crediario", "produto": "crediario", "saldo": r2(saldo), "parcela_atual": r2(pr["valor"].sum()),
+                            "parcelas_restantes": int((pr["parcela_total"] - pr["parcela_atual"].fillna(1) + 1).max()),
                             "taxa_mensal": TAXAS_DERIVADAS["crediario"], "dias_atraso": 0, "consequencia": "nenhuma",
-                            "descricao": f"{len(pr)} parcelamentos ativos"})
+                            "descricao": f"{len(pr)} parcelamentos ativos (estimado a partir do extrato)"})
     desc = u["descricao"].astype(str).str.lower()
     cartao = u[desc.str.contains(r"minimo|mínimo|rotativo|juros cart|encargo", regex=True)]
     if not cartao.empty:
-        dividas.append({"divida_id": "dv_cartao_rotativo", "produto": "cartao_rotativo", "saldo": r2(cartao["valor"].sum() * 6),
+        dividas.append({**base, "divida_id": "dv_cartao_rotativo", "produto": "cartao_rotativo", "saldo": r2(cartao["valor"].sum() * 6),
                         "taxa_mensal": TAXAS_DERIVADAS["cartao_rotativo"], "dias_atraso": 60, "consequencia": "negativacao",
-                        "descricao": "pagamento mínimo/rotativo detectado"})
+                        "descricao": "pagamento mínimo/rotativo detectado (estimado a partir do extrato)"})
     emp = u[desc.str.contains(r"emprest|emprést|financ|consign", regex=True)]
     if not emp.empty:
-        dividas.append({"divida_id": "dv_emprestimo", "produto": "emprestimo", "saldo": r2(emp["valor"].sum() * 8),
+        dividas.append({**base, "divida_id": "dv_emprestimo", "produto": "emprestimo", "saldo": r2(emp["valor"].sum() * 8),
+                        "parcela_atual": r2(emp["valor"].sum()), "parcelas_restantes": 8,
                         "taxa_mensal": TAXAS_DERIVADAS["emprestimo"], "dias_atraso": 0, "consequencia": "negativacao",
-                        "descricao": "parcela de empréstimo detectada"})
+                        "descricao": "parcela de empréstimo detectada (estimado a partir do extrato)"})
     return dividas
 
 
 def carregar_dividas_json(path: Path | None = None) -> dict:
-    return json.loads((path or AQUI / "cleide_dividas.json").read_text(encoding="utf-8"))
+    return json.loads((path or FIXTURES / "persona_cleide_dividas.json").read_text(encoding="utf-8"))
 
 
 # ---------- perfil ----------
 
+def _dividas(lista: list[dict]) -> list[Divida]:
+    out = []
+    for d in lista:
+        campos = {k: v for k, v in d.items() if k in CAMPOS_DIVIDA and v is not None}
+        campos.setdefault("parcela_atual", 0.0)
+        campos.setdefault("parcelas_restantes", 0)
+        out.append(Divida(**campos))
+    return out
+
+
 def perfil_de_transacoes(cliente_id: str, nome: str, df: pd.DataFrame, dividas: list[dict],
-                         tem_reserva: bool = False, dia_pagamento: int = 10, meses: int = 12) -> PerfilFinanceiro:
+                         tem_reserva: bool = False, dia_pagamento: int = 10, meses: int = 12, **flags) -> PerfilFinanceiro:
     df = df[df["cliente_id"].astype(str) == str(cliente_id)]
     todos_meses = sorted(df["mes"].unique())[-meses:]
     renda = df[df["categoria"] == "renda"].groupby("mes")["valor"].sum()
     essenciais = df[(df["tipo"] == "debito") & df["essencial"]].groupby("mes")["valor"].sum()
-    # compromissos fora do acordo: parcelas recorrentes de produtos que NÃO estão na lista de dívidas (ex.: consórcio)
-    compromissos = pd.Series(0.0, index=todos_meses)
+    compromissos = pd.Series(0.0, index=todos_meses)   # parcelas fixas fora do acordo (ex.: consórcio) — nenhuma na base
     return PerfilFinanceiro(
-        cliente_id=str(cliente_id),
-        nome=nome,
-        meses=list(todos_meses),
+        cliente_id=str(cliente_id), nome=nome, meses=list(todos_meses),
         renda_mensal=[r2(renda.get(m, 0.0)) for m in todos_meses],
         essenciais_mensal=[r2(essenciais.get(m, 0.0)) for m in todos_meses],
         compromissos_mensal=[r2(compromissos.get(m, 0.0)) for m in todos_meses],
-        dividas=[Divida(**{k: v for k, v in d.items() if k in Divida.__dataclass_fields__}) for d in dividas],
-        tem_reserva=tem_reserva,
-        dia_pagamento_preferido=dia_pagamento,
+        dividas=_dividas(dividas), tem_reserva=tem_reserva, dia_pagamento_preferido=dia_pagamento, **flags,
     )
 
 
-def carregar_perfil(cliente_id: str = "cli_001") -> tuple[PerfilFinanceiro, pd.DataFrame]:
-    """Fonte por env ZERA_FONTE: csv (persona sintética) | bigquery (agregado zera.perfil_cliente; cai para o extrato bruto)."""
-    fonte = os.getenv("ZERA_FONTE", "csv")
-    meta = carregar_dividas_json()
-    if fonte == "bigquery" and cliente_id != meta.get("cliente_id"):
-        agregado, dividas = carregar_bigquery_agregado(cliente_id)
+def carregar_perfil(cliente_id: str) -> tuple[PerfilFinanceiro, pd.DataFrame]:
+    """Fonte por env ZERA_FONTE: bigquery (agregado; cai para o extrato bruto) | amostra (export real) | fixture (testes)."""
+    f = fonte()
+    if f == "bigquery":
+        agregado = carregar_bigquery_agregado(cliente_id)
         if agregado:
             n = len(agregado["meses"])
             perfil = PerfilFinanceiro(
-                cliente_id=cliente_id, nome=f"Cliente {cliente_id[:8]}", meses=agregado["meses"],
+                cliente_id=cliente_id, nome=agregado.get("nome") or f"Cliente {cliente_id[:4].upper()}", meses=agregado["meses"],
                 renda_mensal=[r2(x) for x in agregado["renda_mensal"]],
                 essenciais_mensal=[r2(x) for x in agregado["essenciais_mensal"]],
-                compromissos_mensal=[0.0] * n,
-                dividas=[Divida(**{k: v for k, v in d.items() if k in Divida.__dataclass_fields__}) for d in dividas],
-                tem_reserva=False, dia_pagamento_preferido=10,
+                compromissos_mensal=[0.0] * n, dividas=_dividas(agregado["dividas"]),
+                tem_reserva=False, dia_pagamento_preferido=10, persona=False, fonte="bigquery",
             )
             return perfil, pd.DataFrame()
         df = carregar_bigquery(cliente_id)
         dividas = derivar_dividas(df, cliente_id)
-        perfil = perfil_de_transacoes(cliente_id, f"Cliente {cliente_id[:8]}", df, dividas)
+        return perfil_de_transacoes(cliente_id, f"Cliente {cliente_id[:4].upper()}", df, dividas, fonte="bigquery"), df
+    if f == "fixture":
+        meta = carregar_dividas_json()
+        if cliente_id != meta.get("cliente_id"):
+            raise LookupError(f"cliente {cliente_id} não existe no fixture de teste")
+        df = carregar_fixture()
+        perfil = perfil_de_transacoes(cliente_id, meta.get("nome", cliente_id), df, meta["dividas"],
+                                      tem_reserva=meta.get("tem_reserva", False), dia_pagamento=meta.get("dia_pagamento_preferido", 10),
+                                      persona=True, fonte="fixture")
         return perfil, df
-    df = carregar_csv()
-    perfil = perfil_de_transacoes(cliente_id, meta.get("nome", cliente_id), df, meta["dividas"],
-                                  tem_reserva=meta.get("tem_reserva", False),
-                                  dia_pagamento=meta.get("dia_pagamento_preferido", 10))
-    return perfil, df
+    df = carregar_amostra()
+    if df[df["cliente_id"].astype(str) == str(cliente_id)].empty:
+        raise LookupError(f"cliente {cliente_id} não existe na amostra; use ZERA_FONTE=bigquery para a base completa")
+    dividas = derivar_dividas(df, cliente_id)
+    nome = next((p["nome"] for p in listar_clientes() if p["cliente_id"] == str(cliente_id)), f"Cliente {cliente_id[:4].upper()}")
+    return perfil_de_transacoes(cliente_id, nome, df, dividas, fonte="amostra"), df

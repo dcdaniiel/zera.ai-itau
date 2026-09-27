@@ -3,10 +3,10 @@ import { useState } from 'react'
 import { Card, HeaderItau, Tile, Toggle } from '../components/ui'
 
 /* Tela 1 — home do banco (fundo) + bottom sheet "Conheça a zera.ai" */
-export function Onboarding({ onAtivar, onDepois }: { onAtivar: () => void; onDepois: () => void }) {
+export function Onboarding({ nome = 'Cliente', onAtivar, onDepois }: { nome?: string; onAtivar: () => void; onDepois: () => void }) {
   return (
     <div className="relative h-full bg-mist">
-      <HeaderItau />
+      <HeaderItau nome={nome} />
       <div className="px-4 pt-6 opacity-60 pointer-events-none select-none">
         <div className="flex items-center justify-between"><div className="font-bold">Meu Itaú</div><span className="text-ink-soft">👁</span></div>
         <div className="mt-4 grid grid-cols-5 gap-2">
@@ -14,7 +14,7 @@ export function Onboarding({ onAtivar, onDepois }: { onAtivar: () => void; onDep
           <Tile icon={<Barcode className="h-5 w-5" />}>Pagar</Tile>
           <Tile icon={<CreditCard className="h-5 w-5" />}>Cartão virtual</Tile>
           <Tile icon={<PiggyBank className="h-5 w-5" />}>Cofrinhos</Tile>
-          <Tile icon={<ShoppingBag className="h-5 w-5" />}>Shop</Tile>
+          <Tile icon={<ShoppingBag className="h-5 w-5" />}>Itaú Shop</Tile>
         </div>
         <Card className="mt-4">
           <div className="flex items-center justify-between"><div className="flex items-center gap-2 font-semibold"><span className="h-6 w-6 rounded bg-itau-blue text-white text-[9px] grid place-items-center font-bold">cc</span> Conta corrente</div><ChevronRight className="h-4 w-4 text-ink-soft" /></div>
@@ -53,11 +53,11 @@ const ITENS = [
   { id: 'avisar', icon: <Bell className="h-5 w-5" />, titulo: 'Me avisar proativamente', desc: 'Entrar em contato quando identificar algo que pode ser importante para você, mesmo que você não tenha iniciado a conversa.' },
 ]
 
-export function Preferencias({ onSalvar, onVoltar }: { onSalvar: (prefs: Record<string, boolean>) => void; onVoltar: () => void }) {
+export function Preferencias({ nome = 'Cliente', onSalvar, onVoltar }: { nome?: string; onSalvar: (prefs: Record<string, boolean>) => void; onVoltar: () => void }) {
   const [prefs, setPrefs] = useState<Record<string, boolean>>({ analisar: true, momentos: true, recomendar: true, avisar: true, open_finance: false })
   return (
     <div className="h-full bg-mist flex flex-col">
-      <HeaderItau />
+      <HeaderItau nome={nome} />
       <div className="flex-1 overflow-y-auto px-4 pb-28">
         <button onClick={onVoltar} className="mt-3 -ml-1 h-9 w-9 grid place-items-center rounded-full active:bg-line" aria-label="Voltar"><ChevronRight className="h-5 w-5 rotate-180" /></button>
         <h1 className="text-[26px] leading-tight font-extrabold">Escolha como a zera.ai pode te ajudar</h1>

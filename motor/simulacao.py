@@ -28,6 +28,15 @@ def cet_anual(i: float) -> float:
     return (1 + i) ** 12 - 1
 
 
+def pv(parcela: float, i: float, n: int) -> float:
+    """Valor presente de `n` parcelas iguais (inverso do Price): quanto de saldo cabe numa parcela."""
+    if n <= 0 or parcela <= 0:
+        return 0.0
+    if i <= 0:
+        return parcela * n
+    return parcela * (1 - (1 + i) ** (-n)) / i
+
+
 def prazo_para_parcela(pv: float, i: float, parcela_max: float, prazo_max: int) -> int | None:
     """Menor prazo (1..prazo_max) cuja parcela Price fica <= parcela_max. None se não cabe."""
     if parcela_max <= 0:
@@ -36,13 +45,6 @@ def prazo_para_parcela(pv: float, i: float, parcela_max: float, prazo_max: int) 
         if pmt(pv, i, n) <= parcela_max + 1e-9:
             return n
     return None
-
-
-def faixa_desconto(dias_atraso: int, politica: dict) -> dict:
-    for faixa in politica["faixas_desconto"]:
-        if faixa["de"] <= dias_atraso <= faixa["ate"]:
-            return faixa
-    return politica["faixas_desconto"][-1]
 
 
 def meses_em_que_nao_cabe(perfil: PerfilFinanceiro, capacidade: Capacidade, parcela: float) -> list[str]:
@@ -94,38 +96,34 @@ def _plano_parcelado(perfil, capacidade, pol, saldo_base, desconto_pct, desconto
 
 def simular_planos(perfil: PerfilFinanceiro, capacidade: Capacidade, politica: dict | None = None,
                    dinheiro_extra: float = 0.0) -> dict:
+    """Planos consolidados (visão do chat): A = quitar tudo agora, B = parcela que cabe, C = parcela que cabe + respiro,
+    e o "padrão" de 12x como contraste. Princípio "ambos ganham": o saldo devedor entra integral (sem desconto)."""
     pol = politica or POLITICA_PADRAO
     i = pol["taxa_mensal_renegociacao"]
     saldo_total = perfil.total_dividas
-    faixa = faixa_desconto(perfil.maior_atraso, pol)
 
-    # Plano A — à vista
-    desc_a = faixa["avista"]
-    valor_avista = r2(saldo_total * (1 - desc_a))
+    # Plano A — quitação integral agora (só cabe se entrou dinheiro que cobre o saldo)
     plano_a = Plano(
-        id="A", tipo="avista", nome="Quitação à vista com desconto",
-        saldo_base=valor_avista, desconto_pct=desc_a, desconto_valor=r2(saldo_total - valor_avista),
-        parcela=valor_avista, prazo=1, prazo_nominal=1, taxa_mensal=0.0, cet_anual=0.0,
-        total_pago=valor_avista, respiros=0, cabe=dinheiro_extra >= valor_avista,
-        motivo=("Cabe: o dinheiro extra cobre o valor à vista." if dinheiro_extra >= valor_avista
-                else "Só faz sentido quando entrar dinheiro extra (13º, restituição, FGTS) — avisamos na hora."),
-        valor_avista=valor_avista,
+        id="A", tipo="avista", nome="Quitar tudo agora",
+        saldo_base=saldo_total, desconto_pct=0.0, desconto_valor=0.0,
+        parcela=saldo_total, prazo=1, prazo_nominal=1, taxa_mensal=0.0, cet_anual=0.0,
+        total_pago=saldo_total, respiros=0, cabe=dinheiro_extra >= saldo_total,
+        motivo=("Cabe: o dinheiro extra cobre o saldo devedor." if dinheiro_extra >= saldo_total
+                else "Só faz sentido quando entrar dinheiro extra (13º, restituição, FGTS) que cubra o saldo — avisamos na hora."),
+        valor_avista=saldo_total,
     )
 
-    # Planos B e C — parcelados
-    desc_p = faixa["parcelado"]
-    saldo_base = r2(saldo_total * (1 - desc_p))
-    desconto_valor = r2(saldo_total - saldo_base)
-    plano_b = _plano_parcelado(perfil, capacidade, pol, saldo_base, desc_p, desconto_valor, com_respiro=False)
-    plano_c = _plano_parcelado(perfil, capacidade, pol, saldo_base, desc_p, desconto_valor, com_respiro=True)
+    # Planos B e C — parcelados (saldo integral à taxa de renegociação)
+    plano_b = _plano_parcelado(perfil, capacidade, pol, saldo_total, 0.0, 0.0, com_respiro=False)
+    plano_c = _plano_parcelado(perfil, capacidade, pol, saldo_total, 0.0, 0.0, com_respiro=True)
 
     # Plano padrão (contraste): prazo fixo, sem olhar a sobra
     n_pad = pol["prazo_padrao"]
-    parcela_pad = r2(pmt(saldo_base, i, n_pad))
+    parcela_pad = r2(pmt(saldo_total, i, n_pad))
     ruins_pad = meses_em_que_nao_cabe(perfil, capacidade, parcela_pad)
     plano_padrao = Plano(
         id="PADRAO", tipo="padrao", nome=f"Renegociação padrão ({n_pad}x)",
-        saldo_base=saldo_base, desconto_pct=desc_p, desconto_valor=desconto_valor,
+        saldo_base=saldo_total, desconto_pct=0.0, desconto_valor=0.0,
         parcela=parcela_pad, prazo=n_pad, prazo_nominal=n_pad, taxa_mensal=i,
         cet_anual=r2(cet_anual(i) * 100), total_pago=r2(parcela_pad * n_pad), respiros=0,
         cabe=parcela_pad <= capacidade.parcela_maxima and not ruins_pad,
@@ -135,7 +133,6 @@ def simular_planos(perfil: PerfilFinanceiro, capacidade: Capacidade, politica: d
         meses_em_que_nao_cabe=ruins_pad,
     )
 
-    # Recomendação
     if plano_a.cabe:
         recomendado = "A"
     elif plano_b.cabe and not plano_b.meses_em_que_nao_cabe:
@@ -148,9 +145,9 @@ def simular_planos(perfil: PerfilFinanceiro, capacidade: Capacidade, politica: d
     resultado = {
         "saldo_total": saldo_total,
         "maior_atraso_dias": perfil.maior_atraso,
-        "faixa_desconto": faixa,
         "custo_mensal_hoje": perfil.custo_total_mensal,
         "parcela_maxima": capacidade.parcela_maxima,
+        "taxa_mensal_renegociacao": i,
         "planos": [p.to_dict() for p in (plano_a, plano_b, plano_c)],
         "plano_padrao": plano_padrao.to_dict(),
         "recomendado": recomendado,
@@ -215,11 +212,12 @@ def criar_acordo_de_cenario(perfil: PerfilFinanceiro, cenario: dict, hoje: date,
     for acao in cenario["acoes"]:
         if acao["acao"] == "quitar":
             quitacoes.append({"divida_id": acao["divida_id"], "nome": acao["nome"], "valor_pago": acao["usa_caixa"],
-                              "desconto_valor": acao["desconto_valor"], "data": hoje.isoformat()})
+                              "data": hoje.isoformat()})
         elif acao["acao"].startswith("renegociar"):
             componentes.append({"divida_id": acao["divida_id"], "nome": acao["nome"], "saldo_base": acao["saldo_base"],
-                                "saldo_devedor": acao["saldo_base"], "parcela": acao["parcela"], "prazo": acao["prazo"],
-                                "pagas": 0, "taxa_mensal": acao["taxa_mensal"], "status": "ativo"})
+                                "saldo_devedor": acao["saldo_base"], "entrada": acao.get("entrada", 0.0),
+                                "parcela": acao["parcela"], "prazo": acao["prazo"],
+                                "pagas": 0, "taxa_mensal": acao.get("taxa_mensal", pol["taxa_mensal_renegociacao"]), "status": "ativo"})
         # "manter" não entra no acordo
     if not componentes and not quitacoes:
         raise ValueError("cenário sem ações")
@@ -320,7 +318,7 @@ def acionar_respiro(acordo: Acordo, data: date | None = None) -> dict:
 
 def amortizar(acordo: Acordo, valor: float, capacidade: Capacidade, perfil: PerfilFinanceiro,
               politica: dict | None = None, preservar_reserva: bool = True, aplicar: bool = False) -> dict:
-    """Usa dinheiro extra para abater o saldo com desconto, preservando uma reserva se o cliente não tem."""
+    """Usa dinheiro extra para abater o saldo (1:1, sem desconto no principal), preservando uma reserva se o cliente não tem."""
     pol = politica or POLITICA_PADRAO
     if acordo.status != "ativo":
         return {"ok": False, "motivo": f"acordo está {acordo.status}"}
@@ -328,13 +326,12 @@ def amortizar(acordo: Acordo, valor: float, capacidade: Capacidade, perfil: Perf
     if preservar_reserva and not perfil.tem_reserva:
         reserva = r2(min(capacidade.colchao * pol["reserva_meses_colchao"], valor * pol["reserva_pct_extra"]))
     valor_amortizado = r2(valor - reserva)
-    desc = pol["desconto_amortizacao"]
     # alvo: o componente com maior saldo devedor (o que mais pesa); sem componentes, o acordo inteiro
     alvo = max(acordo.componentes_ativos, key=lambda c: c["saldo_devedor"]) if acordo.componentes else None
     saldo_alvo = alvo["saldo_devedor"] if alvo else acordo.saldo_devedor
     parcela_alvo = alvo["parcela"] if alvo else acordo.parcela
     taxa_alvo = alvo["taxa_mensal"] if alvo else acordo.taxa_mensal
-    abatimento = r2(min(valor_amortizado / (1 - desc), saldo_alvo))
+    abatimento = r2(min(valor_amortizado, saldo_alvo))
     novo_saldo = r2(max(0.0, saldo_alvo - abatimento))
     prazo_antes = (alvo["prazo"] - alvo["pagas"]) if alvo else acordo.restantes
     if novo_saldo <= 0.5:
@@ -346,7 +343,6 @@ def amortizar(acordo: Acordo, valor: float, capacidade: Capacidade, perfil: Perf
         "valor_recebido": r2(valor),
         "reserva_sugerida": reserva,
         "valor_amortizado": valor_amortizado,
-        "desconto_pct": desc,
         "abatimento_no_saldo": abatimento,
         "divida_alvo": alvo["nome"] if alvo else "acordo",
         "saldo_antes": saldo_alvo,
@@ -357,7 +353,7 @@ def amortizar(acordo: Acordo, valor: float, capacidade: Capacidade, perfil: Perf
         "parcela": parcela_alvo,
         "quita": novo_restante == 0,
         "explicacao": (
-            f"Cada 1 real amortizado abate {1/(1-desc):.2f} do saldo. "
+            "Cada real amortizado abate um real do saldo devedor, e as parcelas restantes diminuem. "
             + ("Sugerimos guardar parte como reserva porque você ainda não tem uma." if reserva > 0 else "")
         ),
     }
