@@ -6,7 +6,7 @@ e contrata só com confirmação explícita. Princípio **"ambos ganham"**: o ba
 (rotativo/cheque a 8–14% a.m. → taxa de renegociação) e o prazo (12x…60x); a parcela cai, a dívida ganha data para acabar e o
 banco recebe o saldo integral + juros do acordo.
 
-Docs: [`docs/PRD-MVP.md`](docs/PRD-MVP.md) · [`docs/arquitetura-c4.md`](docs/arquitetura-c4.md) (C4 + ADK graph + observabilidade/FinOps + uso dos serviços GCP) · [`docs/estrategia-dados.md`](docs/estrategia-dados.md)
+Docs: [`docs/arquitetura-explicativa.md`](docs/arquitetura-explicativa.md) (**entregável 5**: componentes, integrações, decisões técnicas e justificativas) · [`docs/arquitetura-c4-apresentacao.html`](docs/arquitetura-c4-apresentacao.html) (C4 níveis 1 e 2 para apresentar — abra no navegador; `→`/`←` navegam) · [`docs/arquitetura-c4.md`](docs/arquitetura-c4.md) (C4 completo + ADK graph + observabilidade/FinOps + uso dos serviços GCP) · [`docs/PRD-MVP.md`](docs/PRD-MVP.md) · [`docs/estrategia-dados.md`](docs/estrategia-dados.md) · QR da demo: [`docs/qr-zera-ai.png`](docs/qr-zera-ai.png) / [`.svg`](docs/qr-zera-ai.svg)
 
 ```
 motor/        núcleo determinístico: capacidade, priorização, cenários por prazo (entrada + consolidação), hoje×nova opção, benefícios/claims, Price, respiro, amortização, gatilhos

@@ -2,6 +2,8 @@
 
 Projeto `batalha-time-03-vhxk` · Cloud Run em `us-central1` · Gemini via endpoint `global` · BigQuery na location do dataset do evento.
 Versão de trabalho para a submissão — Batalha de Agentes Itaú × Google (26–27/09/2026). Quadro de produto: `docs/quadro-produto.md` (tese, outcomes, guardrails).
+Leitura recomendada antes deste arquivo: [`arquitetura-explicativa.md`](arquitetura-explicativa.md) (componentes, integrações, decisões e justificativas — entregável 5) e
+[`arquitetura-c4-apresentacao.html`](arquitetura-c4-apresentacao.html) (níveis 1 e 2 desenhados para apresentar, com as decisões).
 
 ## 0. Princípios que atravessam todos os níveis
 
