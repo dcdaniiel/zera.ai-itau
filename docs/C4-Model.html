@@ -140,6 +140,19 @@ td b{font-family:var(--display);font-weight:600}
 .formulas{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;font-family:var(--mono);font-size:12.5px;line-height:1.7;overflow-x:auto;display:grid;gap:6px}
 .formulas div{padding-left:1.2em;text-indent:-1.2em;overflow-wrap:anywhere}
 .formulas em{font-style:normal;color:var(--accent);margin-right:8px}
+.seqs{display:grid;gap:18px;margin-top:22px}
+.seq{background:#FFFFFF;border:1px solid var(--border);border-radius:14px;padding:12px 14px 6px;overflow-x:auto}
+.seq h3{font-family:var(--display);font-size:15px;font-weight:600;color:#15203A;margin:2px 0 4px}
+.seq p{font-size:13px;color:#5A6577;margin-bottom:6px;max-width:80ch}
+.seq pre.mermaid{margin:0;min-width:720px;background:transparent}
+.quali{margin-top:22px}
+.quali .tile{margin-top:12px}
+.quali .stats{display:flex;flex-wrap:wrap;gap:22px;margin-top:8px}
+.quali .stats div{display:grid;gap:2px}
+.quali .stats b{font-family:var(--display);font-size:26px;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.quali .stats span{font-size:12px;color:var(--muted)}
+.quali .grafico{margin-top:12px;background:#FFFFFF;border:1px solid var(--border);border-radius:14px;padding:8px;overflow-x:auto}
+.quali .grafico svg{display:block;width:100%;height:auto;min-width:640px}
 footer{max-width:1180px;margin:0 auto;padding:28px 16px 0;font-size:13px;color:var(--muted)}
 footer ul{margin:8px 0 0;padding-left:18px}
 </style>
@@ -152,6 +165,7 @@ footer ul{margin:8px 0 0;padding-left:18px}
       <li><a href="#nivel1">Nível 1 · Contexto</a></li>
       <li><a href="#nivel2">Nível 2 · Containers</a></li>
       <li><a href="#turno">Um turno</a></li>
+      <li><a href="#sequencias">Sequências</a></li>
       <li><a href="#dados">Dados e algoritmos</a></li>
       <li><a href="#decisoes">Decisões</a></li>
       <li><a href="#gcp">Google Cloud</a></li>
@@ -415,6 +429,139 @@ footer ul{margin:8px 0 0;padding-left:18px}
   </div>
 </section>
 
+<!-- ===================== SEQUÊNCIAS ===================== -->
+<section class="slide" id="sequencias">
+  <div class="eyebrow">Diagramas de sequência · exemplos da solução</div>
+  <h2>Quatro caminhos que a demo percorre, passo a passo</h2>
+  <p class="lead">Cada diagrama mostra quem faz o quê: o modelo entende e explica, o motor calcula, os guardrails conferem e a cliente confirma.</p>
+
+  <div class="seqs">
+    <div class="seq">
+      <h3>1 · Um turno de conversa — "Quais opções cabem no meu bolso?"</h3>
+      <p>O roteamento determinístico trata saudações e opções digitadas; o resto vai ao agente. Toda chamada ao Gemini passa pelos guardrails de entrada e de saída; toda tool, pelo de consentimento e pelo registro de números.</p>
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor C as Cliente (app)
+  participant API as API FastAPI
+  participant R as Runner ADK
+  participant G as Guardrails
+  participant M as Gemini 3.8 Flash
+  participant T as Tools · Motor
+  C->>API: POST /chat/stream "Quais opções cabem no meu bolso?"
+  API->>API: roteamento determinístico (saudação? opção digitada?) → não
+  API->>R: run_async(mensagem)
+  R->>G: before_model (injeção, PII, escopo, vulnerabilidade)
+  G-->>R: ok
+  R->>M: generate_content (instruções + histórico + tools)
+  M-->>R: function_call montar_cenarios(parcela_alvo=0)
+  R->>G: before_tool (exige consentimento? não)
+  R->>T: montar_cenarios → cenários C1…Cn + numeros_permitidos
+  R->>G: after_tool (números da sessão)
+  R-->>API: tool_call · tool_result · card cenários
+  API-->>C: NDJSON: etapa "opções" + card (Contratar por opção)
+  R->>M: generate_content (resultado da tool)
+  M-->>R: "A melhor é a C1… 1) Contratar a C1 2) Entender por quê 3) Falar com uma pessoa"
+  R->>G: after_model (pressão, promessa, PII, números ∉ tools)
+  alt números conferem
+    G-->>R: texto aprovado
+  else número fora das tools
+    G-->>R: resposta acolhedora + escalar_sugerido (bloqueio só na observabilidade)
+  end
+  R-->>API: texto final
+  API->>API: extrai "1) 2) 3)" → opcoes (botões)
+  API-->>C: texto + botões + fim (sugestões)
+      </pre>
+    </div>
+
+    <div class="seq">
+      <h3>2 · Contratar pelo botão — via determinística com confirmação humana</h3>
+      <p>O botão não depende de o modelo "decidir" chamar a tool: a API valida o cenário na sessão, abre o card de confirmação com os números do motor e, só depois do toque, executa. Nada passa pelo Gemini.</p>
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor C as Cliente (app)
+  participant API as API FastAPI
+  participant S as Sessão ADK (estado)
+  participant Mo as Motor (fechar_por_cenario)
+  participant E as Estado do cliente (BigQuery · JSON)
+  C->>API: POST /chat/contratar {cenario_id: "C1"}
+  API->>S: C1 existe em state.cenarios e é viável?
+  S-->>API: sim → request_id btn_…
+  API-->>C: card HITL: parcela, prazo, total, saldo devedor, juros
+  Note over C: passo humano — "Confirmo a contratação" ou "Agora não"
+  C->>API: POST /chat/confirmar/stream {request_id, confirmed: true, frase}
+  API->>E: consentimento (canal=botao_app, frase, data/hora)
+  API->>Mo: fechar_por_cenario(C1)
+  Mo-->>API: acordo (componente por dívida, termos, CET)
+  API->>E: acordo salvo (append-only)
+  API->>S: histórico: "[Toquei em Contratar C1 e confirmei]" + "Pronto: acordo fechado…" + ultimas_opcoes
+  API-->>C: etapa confirmar → tool_call/tool_result → card acordo → texto + botões → etapa acompanhar
+      </pre>
+    </div>
+
+    <div class="seq">
+      <h3>3 · HITL nativo do ADK — quando o modelo decide chamar <code>fechar_acordo</code></h3>
+      <p>As tools com efeito são <code>FunctionTool(require_confirmation=True)</code>: o ADK pausa a invocação e só executa com a resposta humana. Um "sim" digitado nunca contrata.</p>
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor C as Cliente (app)
+  participant API as API FastAPI
+  participant R as Runner ADK
+  participant M as Gemini 3.8 Flash
+  participant T as fechar_acordo (require_confirmation)
+  C->>API: "quero fechar a C1"
+  API->>R: run_async
+  R->>M: generate_content
+  M-->>R: function_call fechar_acordo(plano_id="C1")
+  R-->>API: adk_request_confirmation(originalFunctionCall) — invocação pausada
+  API-->>C: card HITL com os números da sessão (nunca o texto do modelo)
+  C->>API: POST /chat/confirmar {request_id, confirmed, frase}
+  API->>R: FunctionResponse(adk_request_confirmation, {confirmed, frase_cliente})
+  alt confirmado
+    R->>T: executa (consentimento canal=hitl_app + frase)
+    T-->>R: acordo
+    R->>M: resultado → texto
+    R-->>API: card acordo + texto
+  else recusado
+    R-->>API: acao_recusada — a tool não roda ("nada foi contratado")
+  end
+  API-->>C: eventos NDJSON (etapa, card, texto, fim)
+      </pre>
+    </div>
+
+    <div class="seq">
+      <h3>4 · Proatividade e dado insuficiente — o balão só aparece se as 7 pré-condições passam</h3>
+      <p>Sem renda no extrato não há cálculo nem abordagem proativa: a zera.ai pergunta, a cliente informa e tudo é recalculado com o valor dito por ela.</p>
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor C as Cliente
+  participant App as App (home)
+  participant API as API FastAPI
+  participant D as Dados (BigQuery · snapshot)
+  participant Mo as Motor
+  participant X as Orquestrador da experiência
+  App->>API: GET /v1/clientes/{id}/proativa
+  API->>D: 1 leitura: perfil_cliente (12 meses) + dividas_derivadas
+  D-->>API: perfil (renda = média das entradas, dívidas rotuladas)
+  API->>Mo: detectar_gatilhos
+  Mo-->>API: entrada_rotativo (cheque especial a 8% a.m.)
+  API->>X: avaliar_proatividade (permissão, gatilho, oportunidade, benefício, contexto, ação, frequência)
+  alt renda não identificada
+    X-->>App: {silent: true, reason: "sem contexto suficiente"} → sem balão
+    C->>API: no chat: "quanto eu devo?" → tools de cálculo recusam (renda_desconhecida) → a zera.ai pergunta
+    C->>API: "minha renda é 2.500" → informar_renda → capacidade e cenários recalculados
+  else tudo ok
+    X-->>App: PROACTIVE_MESSAGE "Diminua suas parcelas"
+    C->>App: toca no balão → experiência guiada (0 tokens) ou conversa
+  end
+      </pre>
+    </div>
+  </div>
+</section>
+
 <!-- ===================== DADOS E ALGORITMOS ===================== -->
 <section class="slide" id="dados">
   <div class="eyebrow">Dados e algoritmos · decisões</div>
@@ -452,12 +599,28 @@ footer ul{margin:8px 0 0;padding-left:18px}
       <h3>Como validamos</h3>
       <ul class="rels">
         <li><b>Motor</b><span>97 testes sem rede; sensibilidade documentada: +R$ 80/mês de gasto muda a recomendação para 60x, +R$ 300 → "nenhuma opção cabe" com diagnóstico.</span></li>
-        <li><b>Segmentação</b><span>k=4 é hipótese de trabalho: validar com <code>ML.EVALUATE</code> (Davies-Bouldin) e estabilidade dos centróides antes de afirmar o nº de segmentos.</span></li>
+        <li><b>Segmentação</b><span><code>ML.EVALUATE</code> do modelo de produção: Davies-Bouldin 1,569 e distância quadrática média 7,286 (k = 4, base completa). A curva por k é gerada por <code>dados/avaliar_k.py</code> e entra no bloco abaixo.</span></li>
         <li><b>Dados</b><span>amostra local é export real do BigQuery; produção lê <code>zera.*</code> (query → tabelas → snapshot) com a fonte sempre rotulada; testes rodam sobre a amostra real.</span></li>
         <li><b>Números do modelo</b><span>golden set de ataques e de números inventados; todo número do texto precisa existir nas tools da sessão, na fala da cliente ou no gatilho.</span></li>
         <li><b>Premissas</b><span>alavancas em <code>politicas.py</code> (percentil, colchão, fator, taxa, prazos, limiares) são fictícias e documentadas — Crédito define as reais.</span></li>
       </ul>
     </div>
+  </div>
+
+  <div class="quali">
+    <h3 style="font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-family:var(--mono);font-weight:500">Qualidade da segmentação (k-means, BigQuery ML)</h3>
+    <!-- DB:INICIO -->
+    <div class="tile">
+      <b>Modelo em produção · <code>zera.kmeans_perfis</code> · k = 4 · base completa (1.000 clientes, 467.585 lançamentos)</b>
+      <div class="stats">
+        <div><b>1,569</b><span>Davies-Bouldin (menor = clusters mais compactos e separados)</span></div>
+        <div><b>7,286</b><span>distância quadrática média ao centróide</span></div>
+        <div><b>160 · 16,0%</b><span>clientes no cluster-alvo · participação na base</span></div>
+        <div><b>3,92</b><span>índice de endividamento do cluster-alvo (vs 1,71 / 0,51 / −1,48)</span></div>
+      </div>
+      <p style="margin-top:10px">Curva Davies-Bouldin por k (2…8): gerada com <code>uv run python -m dados.avaliar_k</code>, que treina os modelos no BigQuery ML com as mesmas 11 features, grava <code>zera.kmeans_avaliacao</code> e substitui este bloco pelo gráfico.</p>
+    </div>
+    <!-- DB:FIM -->
   </div>
 
   <div class="tbl">
@@ -558,5 +721,82 @@ footer ul{margin:8px 0 0;padding-left:18px}
   mark();
 })();
 </script>
+
+<!--claude-mermaid-runtime-begin:3477-->
+<style>.mermaid-diagram{margin-block:4px}.mermaid-diagram svg{display:block;margin:0 auto;max-width:100%;height:auto}</style>
+<script src="/_runtime/mermaid-11.16.1.min.js"></script>
+<script>(function(){
+var CFG={"palettes":{"light":{"surface":"#f4efe4","text":"#42392e","line":"#8a7f6d","border":"#7a6c52","bg":"#fffdf8"},"dark":{"surface":"#262b34","text":"#f2f3f5","line":"#a8adb8","border":"#9aa4b8","bg":"#1f232b"}}};
+if(typeof mermaid==='undefined')return;
+var pres=Array.prototype.slice.call(document.querySelectorAll('pre.mermaid')).filter(function(p){if(p.hasAttribute('data-claude-mermaid-claimed'))return false;p.setAttribute('data-claude-mermaid-claimed','1');return true;});
+if(!pres.length)return;
+var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
+var root=document.documentElement;
+var items=pres.map(function(pre){
+var mount=document.createElement('div');mount.className='mermaid-diagram';
+return {pre:pre,mount:mount,src:pre.textContent||''};
+});
+var seq=0;
+var renderGen=0;
+var lastKey='';
+function pageBg(fallback){
+var els=[document.body,document.documentElement];
+for(var i=0;i<els.length;i++){
+var c=els[i]&&getComputedStyle(els[i]).backgroundColor;
+if(c&&c!=='transparent'&&c!=='rgba(0, 0, 0, 0)')return c;
+}
+return fallback;
+}
+function render(){
+var theme=root.getAttribute('data-theme');
+var dark=theme==='dark'||(!!(mq&&mq.matches)&&theme!=='light');
+var pal=dark?CFG.palettes.dark:CFG.palettes.light;
+var bg=pageBg(pal.bg);
+var key=(dark?'d':'l')+'|'+bg;
+if(key===lastKey)return;
+lastKey=key;
+var gen=++renderGen;
+var font=getComputedStyle(document.body).fontFamily||'sans-serif';
+var nat={useMaxWidth:false};
+mermaid.initialize({
+startOnLoad:false,securityLevel:'strict',theme:'base',
+flowchart:nat,sequence:nat,er:nat,state:nat,class:nat,pie:nat,
+gantt:nat,journey:nat,timeline:nat,gitGraph:nat,mindmap:nat,xyChart:nat,
+quadrantChart:nat,sankey:nat,c4:nat,requirement:nat,block:nat,
+packet:nat,kanban:nat,architecture:nat,radar:nat,
+themeVariables:{background:bg,mainBkg:pal.surface,primaryColor:pal.surface,
+primaryTextColor:pal.text,lineColor:pal.line,primaryBorderColor:pal.border,
+nodeBorder:pal.border,clusterBorder:pal.border,edgeLabelBackground:bg,
+clusterBkg:'rgba(127,127,127,0.07)',titleColor:pal.text,
+darkMode:dark,rowOdd:bg,rowEven:'rgba(127,127,127,0.07)',
+attributeBackgroundColorOdd:bg,attributeBackgroundColorEven:'rgba(127,127,127,0.07)',
+fontSize:'16px',fontFamily:font},
+themeCSS:'.node rect, .node circle, .node polygon, .node path, .cluster rect { stroke-width: 2px; }'
+});
+items.forEach(function(it){
+var id='claude-mermaid-'+seq++;
+mermaid.render(id,it.src).then(function(r){
+if(gen!==renderGen)return;
+var prev=it.pre.previousElementSibling;
+if(prev&&prev.className==='mermaid-diagram'&&prev!==it.mount)return;
+it.mount.innerHTML=r.svg;
+if(!it.mount.parentNode)it.pre.parentNode.insertBefore(it.mount,it.pre);
+it.pre.style.display='none';
+},function(){
+var scratch=document.getElementById(id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+scratch=document.getElementById('d'+id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+if(gen!==renderGen)return;
+if(it.mount.parentNode)it.mount.parentNode.removeChild(it.mount);
+it.pre.style.display='';
+});
+});
+}
+render();
+if(mq&&mq.addEventListener)mq.addEventListener('change',render);
+if(typeof MutationObserver!=='undefined')new MutationObserver(render).observe(root,{attributes:true,attributeFilter:['data-theme']});
+})();</script>
+<!--claude-mermaid-runtime-end-->
 
 </body></html>
