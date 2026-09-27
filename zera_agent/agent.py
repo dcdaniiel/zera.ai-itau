@@ -62,7 +62,7 @@ def _multiagente() -> LlmAgent:
     return LlmAgent(
         name="zera", model=MODEL, instruction=prompts.ROOT,
         description="Agente do Itaú para renegociação de dívidas que cabe no mês do cliente.",
-        tools=tools.TOOLS_ROOT, sub_agents=[diagnostico, negociador, acompanhamento],
+        tools=tools.TOOLS_ROOT + tools.TOOLS_CONHECIMENTO, sub_agents=[diagnostico, negociador, acompanhamento],
         generate_content_config=CONFIG, **CALLBACKS,
     )
 
