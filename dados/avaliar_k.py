@@ -23,6 +23,7 @@ FEATURES = ("pct_essenciais, pct_servico_divida, parcelas_media, qtd_parcelas_me
             "meses_no_vermelho, pior_saldo, sinais_rotativo, sinais_emprestimo, cv_renda, comprometimento_futuro_medio")
 K_PRODUCAO = int(os.getenv("ZERA_NUM_CLUSTERS", "4"))
 SAIDA = Path(__file__).resolve().parent.parent / "docs" / "davies_bouldin.svg"
+PAGINA = Path(__file__).resolve().parent.parent / "docs" / "arquitetura-c4-apresentacao.html"   # o gráfico entra na seção "Dados e algoritmos"
 
 
 def treinar_e_avaliar(client, ks: list[int]) -> list[dict]:
@@ -91,6 +92,28 @@ def grafico_svg(linhas: list[dict], destino: Path = SAIDA, k_prod: int = K_PRODU
     return destino
 
 
+def injetar_na_pagina(linhas: list[dict], svg: Path, pagina: Path = PAGINA, k_prod: int = K_PRODUCAO) -> bool:
+    """Substitui o bloco <!-- DB:INICIO --> … <!-- DB:FIM --> da apresentação C4 pelo gráfico + números (idempotente)."""
+    if not pagina.exists():
+        return False
+    html = pagina.read_text(encoding="utf-8")
+    ini, fim = html.find("<!-- DB:INICIO -->"), html.find("<!-- DB:FIM -->")
+    if ini < 0 or fim < 0:
+        return False
+    corpo = svg.read_text(encoding="utf-8").replace(' width="760" height="420"', "")
+    kp = next((l for l in linhas if l["k"] == k_prod), None)
+    melhor = min(linhas, key=lambda l: l["davies_bouldin_index"])
+    tabela = " · ".join(f"k={l['k']}: {l['davies_bouldin_index']:.3f}" for l in linhas)
+    quando = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+    bloco = (f'<!-- DB:INICIO -->\n    <div class="grafico">{corpo}</div>\n'
+             f'    <p style="margin-top:10px;font-size:13px;color:var(--muted)">ML.EVALUATE por k ({tabela}). Menor Davies-Bouldin: k = {melhor["k"]} '
+             f'({melhor["davies_bouldin_index"]:.3f}); em produção: k = {k_prod}'
+             + (f' ({kp["davies_bouldin_index"]:.3f}, distância quadrática média {kp["mean_squared_distance"]:.3f})' if kp else "")
+             + f'. Base completa, mesmas 11 features padronizadas; tabela <code>zera.kmeans_avaliacao</code>, {quando}.</p>\n    <!-- DB:FIM -->')
+    pagina.write_text(html[:ini] + bloco + html[fim + len("<!-- DB:FIM -->"):], encoding="utf-8")
+    return True
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ks", type=int, nargs="+", default=[2, 3, 4, 5, 6, 7, 8])
@@ -103,7 +126,10 @@ def main() -> None:
         print(f"{l['k']} | {l['davies_bouldin_index']:.3f} | {l['mean_squared_distance']:.3f}{'   <- produção' if l['k'] == K_PRODUCAO else ''}")
     melhor = min(linhas, key=lambda l: l["davies_bouldin_index"])
     print(f"\nmenor Davies-Bouldin: k = {melhor['k']} ({melhor['davies_bouldin_index']:.3f}); produção: k = {K_PRODUCAO}")
-    print(f"gráfico: {grafico_svg(linhas)}  ({datetime.now(timezone.utc).isoformat(timespec='seconds')})")
+    svg = grafico_svg(linhas)
+    print(f"gráfico: {svg}  ({datetime.now(timezone.utc).isoformat(timespec='seconds')})")
+    if injetar_na_pagina(linhas, svg):
+        print(f"apresentação atualizada: {PAGINA} (bloco 'Qualidade da segmentação')")
 
 
 if __name__ == "__main__":

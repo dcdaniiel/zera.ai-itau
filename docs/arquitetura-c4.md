@@ -261,6 +261,309 @@ de próximo passo (direcionamento do produto).
 Sessões: `InMemorySessionService` (1 worker) ou `VertexAiSessionService` (Agent Engine, `ZERA_SESSOES=vertex`). Memória de longo prazo
 (Agent Engine Memory Bank) é P1. O agente é o mesmo no `adk web`, no `/chat` e no explicador da experiência.
 
+## 5b. Diagramas de sequência (exemplos da solução)
+
+Os mesmos quatro caminhos da apresentação (`arquitetura-c4-apresentacao.html`, seção Sequências).
+
+### O que o desenho diz
+      
+        Clienteusa o app; a zera.ai só aparece proativamente se ela autorizou nas preferências. Ela pode corrigir informações, pausar, recusar e pedir uma pessoa a qualquer momento.
+        zera.ai → BigQueryuma leitura pequena por sessão (perfil de 12 meses agregado, nunca o extrato bruto) e escrita append-only de estado, eventos e telemetria.
+        zera.ai → Vertex AIo Gemini entra para entender a intenção e explicar; toda chamada passa pelos guardrails de entrada e de saída.
+        zera.ai → humanoescalonamento com protocolo quando a cliente pede, quando há sinal de vulnerabilidade, quando nada cabe ou quando um guardrail bloqueia.
+        zera.ai → transacionala contratação acontece só depois do CONFIRM no app; no MVP o acordo é criado pelo motor (termos, CET, componente por dívida).
+      
+    
+    
+      Decisões que moldam este nível
+      
+        O LLM nunca calculaPor quê: um erro de R$ 1 numa renegociação é erro de conformidade. Todo número nasce no motor determinístico; o guardrail de saída confere o texto do modelo contra os números das tools.
+        Só a cliente contrataPor quê: consentimento explícito e auditável (canal, frase, horário). "Sim" digitado nunca contrata; só o card de confirmação no app.
+        Nenhum dado mockadoPor quê: a jornada precisa funcionar com os casos difíceis reais: renda ausente no extrato, nada cabe, mais de um acordo. Renda = média das entradas; ausente, a zera.ai pergunta.
+        Humano é uma saída corretaPor quê: a cliente nunca vê um selo técnico. Um bloqueio vira uma mensagem acolhedora com "falar com uma pessoa" em primeiro lugar; o bloqueio fica registrado no backend.
+        Ambos ganhamPor quê: o banco mantém o saldo devedor e recebe os juros do acordo (1,8% a.m.); a cliente troca 8–14% a.m. por parcela que cabe e prazo definido (12–60x).
+      
+    
+  
+
+
+
+
+  C4 · Nível 2 · Containers
+  Um serviço no Cloud Run com sete peças, e três serviços gerenciados em volta
+  Dentro da linha tracejada, tudo roda na mesma imagem. Fora dela, o Google Cloud faz o que é gerenciado: modelo, dados e observabilidade.
+
+  
+    
+      
+        
+      
+
+      
+      
+      Cloud Run · serviço zera · us-central1 · 1 instância
+      1 vCPU · 1 GiB · concurrency 40 · Docker multi-stage
+      usuário sem privilégio · identidade do serviço (sem chave)
+
+      
+      
+      HTTPS
+
+      
+      JSON
+      NDJSON
+
+      
+      evento(ação) · 0 tokens
+
+      
+      Runner · /chat/stream · HITL
+
+      
+      explicador
+
+      
+      callbacks
+
+      
+      generate
+      sanitize
+
+      
+      16 function tools
+
+      
+
+      
+      perfil
+      capacidade
+      acordos
+
+      
+      consultar_conhecimento
+
+      
+      OTLP · JSON
+
+      
+      carregar perfil · salvar estado
+
+      
+      query → tabelas (sem job) → snapshot embarcado · estado/eventos/telemetria por streaming insert
+
+      
+      pessoaCliente (pelo app Itaú)
+
+      
+      App mobile (UI)React 19 · Vite 8 · Tailwind 4Perfis → onboarding → preferências → home com gatilho → experiência guiada · conversa com cards e card de confirmação.
+      APIFastAPI · Python 3.12REST + stream NDJSON; roteamento determinístico (abertura, saudações, botão Contratar); request id e logs.
+
+      
+      Orquestrador da experiênciazera_agent/experiencia.pyMáquina de estados, proatividade (7 checks), contrato estruturado, intenção sem LLM.
+      Agente ADKADK 2.10 · Gemini 3.8 FlashEntende, conduz e explica. 16 tools determinísticas; 3 pausam até a confirmação no app (HITL).
+      Guardrailsguardrails.py · Model ArmorEntrada · tool · saída, como callbacks do ADK; Model Armor opcional; números conferidos com o motor.
+
+      
+      Contexto e estadozera_agent/contexto.pyPerfil + capacidade em memória; acordos (vários), consentimentos, gatilhos, renda/gastos informados; relógio da demo.
+      Motor determinísticomotor/ · Python puroCapacidade, priorização, cenários por prazo, hoje × nova opção, benefícios, termos/CET, acordo, respiro, amortização, gatilhos.
+      RAG leveconhecimento/*.mdPolítica, FAQ e glossário; busca lexical, top-3 trechos como evidência — nunca números; instruções embutidas filtradas.
+
+      
+      Acesso a dadosloader.py · repositório de estadoFonte rotulada; fallbacks se o IAM recusa.
+
+      
+      Observabilidade & FinOpstodas as camadas emitem spans OTel, métricas p50/p95, logs JSON com request/trace id, tokens e custo por jornada (observabilidade.py). Só no backend.
+
+      
+      Vertex AIGemini 3.8 Flash · endpoint global · temperatura 0,2 · credencial = identidade do serviço.Model Armor · template zera-guardrails.
+      Cloud Trace · Monitoring · LoggingTelemetry API (OTLP): spans invocation · call_llm · execute_tool · motor.*; métricas zera.*; métricas de log, alerta 5xx, Billing Budgets.
+      BigQuery · dataset zeraextrato (partição/cluster) · features · kmeans_perfis (BigQuery ML) · perfis_demo · perfil_cliente · dividas_derivadas · estado_cliente (append-only) · eventos · telemetria.
+    
+  
+
+  
+    
+      Como as peças conversam
+      
+        UI → APIa experiência guiada manda {ação, payload} e recebe uma resposta estruturada (response_type); o chat recebe um evento por linha: etapa · tool_call · tool_result · card · texto · hitl · fim.
+        API → Orquestradoro fluxo guiado inteiro roda sem modelo (0 tokens); o Gemini só entra para explicar ("por que essa opção?") com os fatos do estado.
+        API → Agentecada mensagem livre vai ao Runner do ADK; saudações, agradecimentos e o botão Contratar são resolvidos antes, sem modelo.
+        Agente → Guardrails → Vertex AItoda chamada ao Gemini passa por before_model e after_model; toda tool por before_tool (consentimento) e after_tool (números permitidos).
+        Agente → Motor16 function tools; as três com efeito (fechar_acordo, acionar_respiro, amortizar) pausam a invocação até a confirmação no app.
+        Agente → Base de conhecimentoconsultar_conhecimento recupera até 3 trechos da política de renegociação, FAQ e glossário para explicar termos e regras (respiro, cheque especial, negativação). Números nunca vêm daqui: só das tools do motor.
+        Contexto → Dados → BigQueryuma leitura por sessão; estado em zera.estado_cliente (append-only) com fallback JSON local.
+      
+    
+    
+      Decisões que moldam este nível
+      
+        Um serviço, uma instânciaPor quê: um deploy, uma URL, custo previsível. Sessões do ADK e cache de contexto ficam em processo sem split-brain. Evolução: VertexAiSessionService (Agent Engine) libera max-instances &gt; 1.
+        ADK com HITL nativo + botão determinísticoPor quê: FunctionTool(require_confirmation=True) pausa a tool até a resposta humana; o botão Contratar (POST /chat/contratar) abre o mesmo card sem depender de o modelo "decidir" chamar a tool. Os dois caminhos produzem os mesmos eventos.
+        Guardrails como callbacks, em três camadasPor quê: a entrada bloqueia sem chamar o modelo (injeção, morse/base64, PII, fora de escopo, 3 bloqueios → humano); a saída substitui pressão, promessa e número fora das tools. Números valem a sessão inteira e caducam quando o estado muda.
+        Dados: query → tabelas → snapshotPor quê: no projeto do evento a identidade de runtime não pode criar jobs no BigQuery e ninguém do time altera IAM. O deploy exporta o resultado do k-means com a credencial de quem publica; em runtime a API tenta a query, depois tabledata.list, depois o snapshot, sempre rotulando a fonte.
+        Experiência guiada sem LLMPor quê: 10 telas previsíveis, testáveis por matriz estado × ação, custo zero de tokens. O modelo fica onde agrega: entender intenção e explicar.
+        Observabilidade só no backendPor quê: a cliente não precisa ver tokens nem bloqueios. Traces, métricas, logs e custo por jornada vão para o Cloud Observability e para /metrics; a banca vê lá.
+      
+    
+  
+
+
+
+
+  Dinâmica · um turno de conversa
+  O caminho de uma mensagem até a resposta, e o caminho de um toque em "Contratar"
+  A sequência Entender → Opções → Escolher → Confirmar no app → Acompanhar só avança quando a cliente pede cada etapa.
+
+  
+    Cliente digita"Quais opções cabem no meu bolso?"
+    Roteamento na APIsaudação/agradecimento → resposta fixa (0 tokens); senão vai ao agente
+    Guardrail de entradaModel Armor, injeção, PII redigida, escopo, vulnerabilidade
+    Gemini decidechama montar_cenarios (ou pergunta a renda se o histórico não tem entradas)
+    Motor calculacenários por prazo, viabilidade, rótulos; numeros_permitidos
+    Guardrail de saídanúmero fora das tools → mensagem acolhedora com "falar com uma pessoa"
+    Eventos em streametapa · tool_call · card · texto · fim renderizados conforme chegam
+    Toque em Contratar/chat/contratar → card de confirmação com os números do motor → /chat/confirmar executa
+  
+
+  
+    Via do modelo (HITL nativo)O Gemini chama fechar_acordo → o ADK emite adk_request_confirmation e pausa → card no app → FunctionResponse(confirmed, frase) → a tool roda com consentimento canal=hitl_app. Recusa → acao_recusada, nada executa.
+    Via do botão (determinística)Cada opção do card tem um botão. A API valida o cenário na sessão, abre o mesmo card (request_id btn_…) e, na confirmação, executa fechar_por_cenario no motor com consentimento canal=botao_app. Zero tokens.
+    Dado insuficienteSem entradas no histórico, as tools de cálculo recusam (renda_desconhecida). A zera.ai pergunta; informar_renda grava com fonte "informada pela cliente" e tudo é recalculado. Nada é imputado.
+  
+
+
+
+
+  Diagramas de sequência · exemplos da solução
+  Quatro caminhos que a demo percorre, passo a passo
+  Cada diagrama mostra quem faz o quê: o modelo entende e explica, o motor calcula, os guardrails conferem e a cliente confirma.
+
+  
+    
+      1 · Um turno de conversa — "Quais opções cabem no meu bolso?"
+
+O roteamento determinístico trata saudações e opções digitadas; o resto vai ao agente. Toda chamada ao Gemini passa pelos guardrails de entrada e de saída; toda tool, pelo de consentimento e pelo registro de números.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor C as Cliente (app)
+  participant API as API FastAPI
+  participant R as Runner ADK
+  participant G as Guardrails
+  participant M as Gemini 3.8 Flash
+  participant T as Tools · Motor
+  C->>API: POST /chat/stream "Quais opções cabem no meu bolso?"
+  API->>API: roteamento determinístico (saudação? opção digitada?) → não
+  API->>R: run_async(mensagem)
+  R->>G: before_model (injeção, PII, escopo, vulnerabilidade)
+  G-->>R: ok
+  R->>M: generate_content (instruções + histórico + tools)
+  M-->>R: function_call montar_cenarios(parcela_alvo=0)
+  R->>G: before_tool (exige consentimento? não)
+  R->>T: montar_cenarios → cenários C1…Cn + numeros_permitidos
+  R->>G: after_tool (números da sessão)
+  R-->>API: tool_call · tool_result · card cenários
+  API-->>C: NDJSON: etapa "opções" + card (Contratar por opção)
+  R->>M: generate_content (resultado da tool)
+  M-->>R: "A melhor é a C1… 1) Contratar a C1 2) Entender por quê 3) Falar com uma pessoa"
+  R->>G: after_model (pressão, promessa, PII, números ∉ tools)
+  alt números conferem
+    G-->>R: texto aprovado
+  else número fora das tools
+    G-->>R: resposta acolhedora + escalar_sugerido (bloqueio só na observabilidade)
+  end
+  R-->>API: texto final
+  API->>API: extrai "1) 2) 3)" → opcoes (botões)
+  API-->>C: texto + botões + fim (sugestões)
+```
+
+### 2 · Contratar pelo botão — via determinística com confirmação humana
+
+O botão não depende de o modelo "decidir" chamar a tool: a API valida o cenário na sessão, abre o card de confirmação com os números do motor e, só depois do toque, executa. Nada passa pelo Gemini.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor C as Cliente (app)
+  participant API as API FastAPI
+  participant S as Sessão ADK (estado)
+  participant Mo as Motor (fechar_por_cenario)
+  participant E as Estado do cliente (BigQuery · JSON)
+  C->>API: POST /chat/contratar {cenario_id: "C1"}
+  API->>S: C1 existe em state.cenarios e é viável?
+  S-->>API: sim → request_id btn_…
+  API-->>C: card HITL: parcela, prazo, total, saldo devedor, juros
+  Note over C: passo humano — "Confirmo a contratação" ou "Agora não"
+  C->>API: POST /chat/confirmar/stream {request_id, confirmed: true, frase}
+  API->>E: consentimento (canal=botao_app, frase, data/hora)
+  API->>Mo: fechar_por_cenario(C1)
+  Mo-->>API: acordo (componente por dívida, termos, CET)
+  API->>E: acordo salvo (append-only)
+  API->>S: histórico: "[Toquei em Contratar C1 e confirmei]" + "Pronto: acordo fechado…" + ultimas_opcoes
+  API-->>C: etapa confirmar → tool_call/tool_result → card acordo → texto + botões → etapa acompanhar
+```
+
+### 3 · HITL nativo do ADK — quando o modelo decide chamar fechar_acordo
+
+As tools com efeito são FunctionTool(require_confirmation=True): o ADK pausa a invocação e só executa com a resposta humana. Um "sim" digitado nunca contrata.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor C as Cliente (app)
+  participant API as API FastAPI
+  participant R as Runner ADK
+  participant M as Gemini 3.8 Flash
+  participant T as fechar_acordo (require_confirmation)
+  C->>API: "quero fechar a C1"
+  API->>R: run_async
+  R->>M: generate_content
+  M-->>R: function_call fechar_acordo(plano_id="C1")
+  R-->>API: adk_request_confirmation(originalFunctionCall) — invocação pausada
+  API-->>C: card HITL com os números da sessão (nunca o texto do modelo)
+  C->>API: POST /chat/confirmar {request_id, confirmed, frase}
+  API->>R: FunctionResponse(adk_request_confirmation, {confirmed, frase_cliente})
+  alt confirmado
+    R->>T: executa (consentimento canal=hitl_app + frase)
+    T-->>R: acordo
+    R->>M: resultado → texto
+    R-->>API: card acordo + texto
+  else recusado
+    R-->>API: acao_recusada — a tool não roda ("nada foi contratado")
+  end
+  API-->>C: eventos NDJSON (etapa, card, texto, fim)
+```
+
+### 4 · Proatividade e dado insuficiente — o balão só aparece se as 7 pré-condições passam
+
+Sem renda no extrato não há cálculo nem abordagem proativa: a zera.ai pergunta, a cliente informa e tudo é recalculado com o valor dito por ela.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor C as Cliente
+  participant App as App (home)
+  participant API as API FastAPI
+  participant D as Dados (BigQuery · snapshot)
+  participant Mo as Motor
+  participant X as Orquestrador da experiência
+  App->>API: GET /v1/clientes/{id}/proativa
+  API->>D: 1 leitura: perfil_cliente (12 meses) + dividas_derivadas
+  D-->>API: perfil (renda = média das entradas, dívidas rotuladas)
+  API->>Mo: detectar_gatilhos
+  Mo-->>API: entrada_rotativo (cheque especial a 8% a.m.)
+  API->>X: avaliar_proatividade (permissão, gatilho, oportunidade, benefício, contexto, ação, frequência)
+  alt renda não identificada
+    X-->>App: {silent: true, reason: "sem contexto suficiente"} → sem balão
+    C->>API: no chat: "quanto eu devo?" → tools de cálculo recusam (renda_desconhecida) → a zera.ai pergunta
+    C->>API: "minha renda é 2.500" → informar_renda → capacidade e cenários recalculados
+  else tudo ok
+    X-->>App: PROACTIVE_MESSAGE "Diminua suas parcelas"
+    C->>App: toca no balão → experiência guiada (0 tokens) ou conversa
+  end
+```
+
 ## 6. Pipeline de dados e ciência de dados
 
 ```mermaid
@@ -285,7 +588,7 @@ flowchart TB
 | Etapa | Escolha | Por quê / como validar |
 |---|---|---|
 | Features | 12 meses por cliente; proporções (essenciais/saídas, serviço de dívida/saídas) e sinais binários | Robustas quando a renda não aparece no extrato (base do evento pode não ter entradas). |
-| Segmentação | k-means (BigQuery ML), k=4, k-means++, features padronizadas | Roda onde os dados estão, sem mover dados. Validar k com `ML.EVALUATE` (Davies-Bouldin) e estabilidade (`ML.CENTROIDS`) antes de afirmar o nº de segmentos (quadro item 05). |
+| Segmentação | k-means (BigQuery ML), k=4, k-means++, features padronizadas | Roda onde os dados estão, sem mover dados. `ML.EVALUATE` do modelo de produção (base completa, 1.000 clientes): Davies-Bouldin 1,569, distância quadrática média 7,286; curva por k com `dados/avaliar_k.py` (`zera.kmeans_avaliacao`, gráfico na apresentação). |
 | Cluster-alvo | maior índice de endividamento (média de z-scores de vermelho, pior saldo, serviço de dívida, parcelas, rotativo, empréstimo) | Regra explícita e auditável; a mesma fórmula roda em pandas no modo local (`segmentacao.py`). |
 | Persona | medoide do cluster-alvo (menor distância ao centróide) recebe o nome "Cleide" | Persona = cliente real mais típico do segmento; identidade fictícia (quadro item 19). |
 | Dívidas | derivadas por regras (rotuladas) — o evento não traz cadastro | Substituir por cadastro real na integração; a interface já mostra a fonte. |

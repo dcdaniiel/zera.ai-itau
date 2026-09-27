@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>zera.ai Arquitetura C4</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#F3F5F8; --surface:#FFFFFF; --surface-2:#E9EDF3; --ink:#15203A; --muted:#5A6577; --line:#7C8798; --border:#D3D9E3;
+  --accent:#EC7000; --accent-ink:#FFFFFF; --accent-soft:#FFF0E3; --accent-line:#F0A25E;
+  --person:#12305E; --person-ink:#FFFFFF; --ext:#EEF1F5; --ext-line:#8B96A8; --ext-ink:#2A3446;
+  --ct:#FFFFFF; --ct-line:#E48A34; --ok:#1E7F4F; --halo:#F3F5F8;
+  --display:'Sora',system-ui,sans-serif; --body:'IBM Plex Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0E1320; --surface:#161C2B; --surface-2:#1E2536; --ink:#E9EDF5; --muted:#A5AFC1; --line:#8E99AD; --border:#2B3448;
+    --accent:#FF8A24; --accent-ink:#1A0E00; --accent-soft:#3A2208; --accent-line:#D97A22;
+    --person:#3D66AE; --person-ink:#FFFFFF; --ext:#1B2232; --ext-line:#6E7A90; --ext-ink:#D6DDEA;
+    --ct:#1A2233; --ct-line:#E0862F; --ok:#4CC38A; --halo:#0E1320;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0E1320; --surface:#161C2B; --surface-2:#1E2536; --ink:#E9EDF5; --muted:#A5AFC1; --line:#8E99AD; --border:#2B3448;
+  --accent:#FF8A24; --accent-ink:#1A0E00; --accent-soft:#3A2208; --accent-line:#D97A22;
+  --person:#3D66AE; --person-ink:#FFFFFF; --ext:#1B2232; --ext-line:#6E7A90; --ext-ink:#D6DDEA;
+  --ct:#1A2233; --ct-line:#E0862F; --ok:#4CC38A; --halo:#0E1320;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto} }
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.5;padding-block:0 48px;padding-inline:0}
+a{color:inherit}
+code,.mono{font-family:var(--mono);font-size:.92em}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0}
+p{margin:0}
+
+/* nav */
+.nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--border)}
+.nav-in{max-width:1180px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-family:var(--display);font-weight:700;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+.brand i{display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--accent);transform:rotate(45deg)}
+.nav ol{list-style:none;margin:0;padding:0;display:flex;gap:4px;flex-wrap:wrap}
+.nav a{text-decoration:none;font-size:13px;font-weight:500;color:var(--muted);padding:6px 10px;border-radius:999px}
+.nav a.on{background:var(--accent-soft);color:var(--ink)}
+.nav a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.hint{margin-left:auto;font-size:12px;color:var(--muted)}
+.hint kbd{font-family:var(--mono);border:1px solid var(--border);border-radius:4px;padding:0 5px;background:var(--surface)}
+
+/* slides */
+.slide{max-width:1180px;margin:0 auto;padding:44px 16px 28px;border-bottom:1px solid var(--border);scroll-margin-top:64px}
+.slide:last-of-type{border-bottom:0}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);font-weight:500}
+.slide h2{font-size:clamp(24px,3.2vw,36px);line-height:1.15;margin-top:6px}
+.lead{max-width:68ch;color:var(--muted);margin-top:10px;font-size:17px}
+
+/* cover */
+.cover{padding-top:56px}
+.cover h1{font-size:clamp(34px,5.4vw,64px);line-height:1.05;letter-spacing:-.02em}
+.cover h1 em{font-style:normal;color:var(--accent)}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:28px}
+.fact{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+.fact b{display:block;font-family:var(--display);font-size:15px;margin-bottom:4px}
+.fact span{font-size:14px;color:var(--muted)}
+.meta{margin-top:22px;font-size:13px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap}
+
+/* legend */
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:18px;font-size:13px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.sw{width:22px;height:14px;border-radius:4px;border:1.5px solid transparent}
+.sw.p{background:var(--person)} .sw.s{background:var(--accent)} .sw.e{background:var(--ext);border-color:var(--ext-line);border-style:dashed} .sw.c{background:var(--ct);border-color:var(--ct-line)}
+
+/* diagrams */
+.diagram{margin-top:22px;background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow-x:auto;padding:12px}
+.diagram svg{display:block;width:100%;height:auto;min-width:820px;--halo:var(--surface)}
+.node{box-sizing:border-box;height:100%;border-radius:10px;padding:9px 11px;display:flex;flex-direction:column;gap:2px;font-size:12px;line-height:1.28;overflow:hidden}
+.node .nt{font-family:var(--display);font-weight:600;font-size:13.5px;line-height:1.2}
+.node .nk{font-family:var(--mono);font-size:10.5px;opacity:.85;overflow-wrap:anywhere}
+.node .nd{font-size:11.5px;margin-top:2px;opacity:.95}
+.node.person{background:var(--person);color:var(--person-ink)}
+.node.sys{background:var(--accent);color:var(--accent-ink)}
+.node.ext{background:var(--ext);color:var(--ext-ink);border:1.5px dashed var(--ext-line)}
+.node.ct{background:var(--ct);color:var(--ink);border:1.5px solid var(--ct-line)}
+.node.ct .nk{color:var(--muted)} .node.ct .nd{color:var(--ink)}
+.node.band{flex-direction:row;align-items:center;gap:14px;padding:8px 14px}
+.node.band .nt{white-space:nowrap} .node.band .nd{margin-top:0}
+.person-icon{display:inline-block;font-size:10px;letter-spacing:.06em;text-transform:uppercase;opacity:.75;font-family:var(--mono)}
+.arrow{fill:none;stroke:var(--line);stroke-width:1.6;marker-end:url(#arr)}
+.arrow.dashed{stroke-dasharray:5 4}
+.lbl{font-family:var(--body);font-size:11.5px;font-weight:500;fill:var(--muted);paint-order:stroke;stroke:var(--halo);stroke-width:5px;stroke-linejoin:round}
+.boundary{fill:none;stroke:var(--accent-line);stroke-width:1.5;stroke-dasharray:8 6;rx:16}
+.btitle{font-family:var(--display);font-size:13px;font-weight:600;fill:var(--ink)}
+.bsub{font-family:var(--mono);font-size:11px;fill:var(--muted)}
+
+/* two-column reading + decisions */
+.read{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:22px;margin-top:22px}
+@media (max-width:820px){.read{grid-template-columns:minmax(0,1fr)}}
+.read h3{font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-family:var(--mono);font-weight:500;margin-bottom:10px}
+.rels{list-style:none;padding:0;margin:0;display:grid;gap:8px}
+.rels li{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:14.5px}
+.rels b{font-family:var(--display);font-weight:600;white-space:nowrap}
+.rels code{overflow-wrap:anywhere}
+@media (max-width:560px){.rels li{grid-template-columns:1fr;gap:2px}.rels b{white-space:normal}}
+.rels .to{color:var(--accent);font-family:var(--mono);font-size:12px}
+.decs{display:grid;gap:10px}
+.dec{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:10px;padding:12px 14px}
+.dec b{display:block;font-family:var(--display);font-size:14.5px;margin-bottom:3px}
+.dec p{font-size:13.5px;color:var(--muted)}
+.dec p strong{color:var(--ink);font-weight:600}
+
+/* flow strip */
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:22px 0 0;padding:0;list-style:none;counter-reset:st}
+.st{flex:1 1 150px;min-width:150px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 12px 10px;position:relative;font-size:13.5px}
+.st::before{counter-increment:st;content:counter(st);position:absolute;top:-10px;left:12px;background:var(--accent);color:var(--accent-ink);font-family:var(--mono);font-size:11px;font-weight:500;border-radius:999px;padding:1px 8px}
+.st b{display:block;font-family:var(--display);font-size:13.5px;margin:4px 0 3px}
+.st span{color:var(--muted);font-size:12.5px;display:block}
+.st.hitl{border-color:var(--accent-line);background:var(--accent-soft)}
+.paths{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-top:18px}
+.path{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;font-size:14px}
+.path b{font-family:var(--display);display:block;margin-bottom:6px}
+.path .mono{color:var(--muted)}
+
+/* decisions table */
+.tbl{margin-top:22px;overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
+th,td{text-align:left;vertical-align:top;padding:11px 14px;border-bottom:1px solid var(--border)}
+th{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:500;background:var(--surface-2)}
+tr:last-child td{border-bottom:0}
+td:first-child{font-family:var(--mono);color:var(--accent);white-space:nowrap;font-size:12.5px}
+td b{font-family:var(--display);font-weight:600}
+
+/* gcp tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;margin-top:22px}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+.tile b{display:block;font-family:var(--display);font-size:15px}
+.tile .nk{font-family:var(--mono);font-size:11.5px;color:var(--accent);margin:2px 0 6px;display:block}
+.tile p{font-size:13.5px;color:var(--muted)}
+.tile.p1{border-style:dashed}
+
+.formulas{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;font-family:var(--mono);font-size:12.5px;line-height:1.7;overflow-x:auto;display:grid;gap:6px}
+.formulas div{padding-left:1.2em;text-indent:-1.2em;overflow-wrap:anywhere}
+.formulas em{font-style:normal;color:var(--accent);margin-right:8px}
+.seqs{display:grid;gap:18px;margin-top:22px}
+.seq{background:#FFFFFF;border:1px solid var(--border);border-radius:14px;padding:12px 14px 6px;overflow-x:auto}
+.seq h3{font-family:var(--display);font-size:15px;font-weight:600;color:#15203A;margin:2px 0 4px}
+.seq p{font-size:13px;color:#5A6577;margin-bottom:6px;max-width:80ch}
+.seq pre.mermaid{margin:0;min-width:720px;background:transparent}
+.quali{margin-top:22px}
+.quali .tile{margin-top:12px}
+.quali .stats{display:flex;flex-wrap:wrap;gap:22px;margin-top:8px}
+.quali .stats div{display:grid;gap:2px}
+.quali .stats b{font-family:var(--display);font-size:26px;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.quali .stats span{font-size:12px;color:var(--muted)}
+.quali .grafico{margin-top:12px;background:#FFFFFF;border:1px solid var(--border);border-radius:14px;padding:8px;overflow-x:auto}
+.quali .grafico svg{display:block;width:100%;height:auto;min-width:640px}
+footer{max-width:1180px;margin:0 auto;padding:28px 16px 0;font-size:13px;color:var(--muted)}
+footer ul{margin:8px 0 0;padding-left:18px}
+</style>
+</head>
+<body>
+
+<nav class="nav" aria-label="Seções">
+  <div class="nav-in">
+    <span class="brand"><i></i>zera.ai · arquitetura</span>
+    <ol>
+      <li><a href="#capa">Capa</a></li>
+      <li><a href="#nivel1">Nível 1 · Contexto</a></li>
+      <li><a href="#nivel2">Nível 2 · Containers</a></li>
+      <li><a href="#turno">Um turno</a></li>
+      <li><a href="#sequencias">Sequências</a></li>
+      <li><a href="#dados">Dados e algoritmos</a></li>
+      <li><a href="#decisoes">Decisões</a></li>
+      <li><a href="#gcp">Google Cloud</a></li>
+    </ol>
+    <span class="hint">apresentar: <kbd>→</kbd> próxima · <kbd>←</kbd> anterior</span>
+  </div>
+</nav>
+
+<!-- ===================== CAPA ===================== -->
+<section class="slide cover" id="capa">
+  <div class="eyebrow">Batalha de Agentes Itaú × Google · 26–27/09/2026 · projeto batalha-time-03-vhxk</div>
+  <h1>zera.ai — a arquitetura de uma renegociação que <em>cabe no mês</em></h1>
+  <p class="lead">C4 Model, níveis 1 (contexto) e 2 (containers), com as decisões que explicam cada caixa e cada seta. O agente entende e explica; o motor calcula; só a cliente contrata.</p>
+  <div class="facts">
+    <div class="fact"><b>1 serviço no Cloud Run</b><span>API + agente ADK + UI na mesma imagem e URL. Um deploy, custo previsível, 1 instância.</span></div>
+    <div class="fact"><b>Motor determinístico</b><span>Todo número nasce em Python puro testado. O Gemini nunca calcula nem decide o fluxo.</span></div>
+    <div class="fact"><b>Confirmação humana nativa</b><span>Tools com efeito pausam no ADK (<code>require_confirmation</code>) até o toque no app.</span></div>
+    <div class="fact"><b>Nenhum dado mockado</b><span>Perfis reais da base do evento, segmentados por k-means no BigQuery ML. Renda ausente? A zera.ai pergunta.</span></div>
+  </div>
+  <div class="meta">
+    <span>Modelo: Gemini 3.8 Flash · Vertex AI (endpoint global)</span>
+    <span>Framework: Google ADK 2.10</span>
+    <span>Dados: BigQuery + BigQuery ML</span>
+    <span>Observabilidade: Cloud Trace · Monitoring · Logging</span>
+  </div>
+  <div class="legend" aria-label="Legenda">
+    <span><i class="sw p"></i>Pessoa</span>
+    <span><i class="sw s"></i>Sistema zera.ai</span>
+    <span><i class="sw e"></i>Sistema externo</span>
+    <span><i class="sw c"></i>Container (dentro do serviço)</span>
+  </div>
+</section>
+
+<!-- ===================== NÍVEL 1 ===================== -->
+<section class="slide" id="nivel1">
+  <div class="eyebrow">C4 · Nível 1 · Contexto do sistema</div>
+  <h2>Quem fala com a zera.ai e o que ela depende de fora</h2>
+  <p class="lead">Três pessoas, um sistema e cinco dependências. A cliente decide e autoriza tudo; o atendimento humano é uma saída prevista, não uma falha.</p>
+
+  <div class="diagram">
+    <svg viewBox="0 0 1200 720" role="img" aria-label="Diagrama de contexto: cliente, app Itaú, zera.ai, atendimento humano, produto/crédito/dados, BigQuery, Vertex AI, Cloud Observability e sistemas transacionais">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--line)"/></marker>
+      </defs>
+
+      <!-- setas -->
+      <path class="arrow" d="M270,112 L468,92"/>
+      <text class="lbl" x="330" y="90">usa o app</text>
+
+      <path class="arrow" d="M600,140 L600,288"/>
+      <text class="lbl" x="612" y="200">abre a experiência guiada / a conversa</text>
+      <text class="lbl" x="612" y="216">recebe o convite proativo (se autorizou)</text>
+
+      <path class="arrow" d="M440,375 L272,375"/>
+      <text class="lbl" x="285" y="366">escala com protocolo</text>
+
+      <path class="arrow" d="M270,600 L438,440"/>
+      <text class="lbl" x="255" y="540">define políticas e catálogo</text>
+      <text class="lbl" x="255" y="556">acompanha funil, cumprimento, custo</text>
+
+      <path class="arrow" d="M760,330 L928,118"/>
+      <text class="lbl" x="700" y="252">lê 1 perfil por sessão</text>
+      <text class="lbl" x="700" y="268">grava estado, eventos, telemetria</text>
+
+      <path class="arrow" d="M760,368 L928,278"/>
+      <text class="lbl" x="800" y="312">explica e conversa</text>
+      <text class="lbl" x="800" y="328">atrás dos guardrails</text>
+
+      <path class="arrow" d="M760,405 L928,435"/>
+      <text class="lbl" x="768" y="372">spans · métricas · logs · custo</text>
+
+      <path class="arrow" d="M760,440 L928,592"/>
+      <text class="lbl" x="770" y="520">contrata só após CONFIRM</text>
+      <text class="lbl" x="770" y="536">(simulado no MVP)</text>
+
+      <!-- pessoas -->
+      <foreignObject x="40" y="60" width="230" height="110"><div class="node person"><span class="person-icon">pessoa</span><div class="nt">Cliente Itaú</div><div class="nd">Entrou no rotativo ou no cheque especial. Decide e autoriza toda ação financeira.</div></div></foreignObject>
+      <foreignObject x="40" y="320" width="230" height="110"><div class="node person"><span class="person-icon">pessoa</span><div class="nt">Atendimento humano</div><div class="nd">Recebe escalonamentos: pedido da cliente, vulnerabilidade, nenhuma opção, bloqueio de guardrail.</div></div></foreignObject>
+      <foreignObject x="40" y="560" width="230" height="110"><div class="node person"><span class="person-icon">pessoa</span><div class="nt">Produto, Crédito e Dados</div><div class="nd">Definem as alavancas (<span class="mono">politicas.py</span>) e acompanham métricas em BigQuery / Monitoring.</div></div></foreignObject>
+
+      <!-- app -->
+      <foreignObject x="470" y="40" width="260" height="100"><div class="node ext"><div class="nt">App Itaú (home)</div><div class="nd">Onboarding, preferências (consentimento), balão proativo no botão flutuante, acesso à conversa.</div></div></foreignObject>
+
+      <!-- sistema -->
+      <foreignObject x="440" y="290" width="320" height="170"><div class="node sys"><div class="nt" style="font-size:18px">zera.ai</div><div class="nk">agente de renegociação · ADK + Gemini + motor determinístico</div><div class="nd">Detecta o gatilho, calcula opções que cabem no mês, explica em linguagem simples, tira dúvidas com a base de conhecimento (política, FAQ, glossário — RAG leve), contrata só com confirmação explícita e acompanha o acordo (respiro, amortização, novo acordo).</div></div></foreignObject>
+
+      <!-- externos -->
+      <foreignObject x="930" y="60" width="230" height="110"><div class="node ext"><div class="nt">BigQuery + BigQuery ML</div><div class="nd">Base do evento → camada <span class="mono">zera.*</span>: features, k-means, perfis, dívidas derivadas, estado, eventos, telemetria.</div></div></foreignObject>
+      <foreignObject x="930" y="220" width="230" height="110"><div class="node ext"><div class="nt">Vertex AI</div><div class="nd">Gemini 3.8 Flash no endpoint <span class="mono">global</span> · Model Armor · Agent Engine (sessões, P1).</div></div></foreignObject>
+      <foreignObject x="930" y="380" width="230" height="110"><div class="node ext"><div class="nt">Cloud Observability</div><div class="nd">Cloud Trace, Monitoring e Logging via Telemetry API (OTLP); métricas de log; orçamento de billing.</div></div></foreignObject>
+      <foreignObject x="930" y="540" width="230" height="110"><div class="node ext"><div class="nt">Sistemas transacionais</div><div class="nd">Contratação, débito automático, boleto. Simulados no MVP e marcados como tal na interface.</div></div></foreignObject>
+    </svg>
+  </div>
+
+  <div class="read">
+    <div>
+      <h3>O que o desenho diz</h3>
+      <ul class="rels">
+        <li><b>Cliente</b><span>usa o app; a zera.ai só aparece proativamente se ela autorizou nas preferências. Ela pode corrigir informações, pausar, recusar e pedir uma pessoa a qualquer momento.</span></li>
+        <li><b>zera.ai → BigQuery</b><span>uma leitura pequena por sessão (perfil de 12 meses agregado, nunca o extrato bruto) e escrita append-only de estado, eventos e telemetria.</span></li>
+        <li><b>zera.ai → Vertex AI</b><span>o Gemini entra para entender a intenção e explicar; toda chamada passa pelos guardrails de entrada e de saída.</span></li>
+        <li><b>zera.ai → humano</b><span>escalonamento com protocolo quando a cliente pede, quando há sinal de vulnerabilidade, quando nada cabe ou quando um guardrail bloqueia.</span></li>
+        <li><b>zera.ai → transacional</b><span>a contratação acontece só depois do <code>CONFIRM</code> no app; no MVP o acordo é criado pelo motor (termos, CET, componente por dívida).</span></li>
+      </ul>
+    </div>
+    <div>
+      <h3>Decisões que moldam este nível</h3>
+      <div class="decs">
+        <div class="dec"><b>O LLM nunca calcula</b><p><strong>Por quê:</strong> um erro de R$ 1 numa renegociação é erro de conformidade. Todo número nasce no motor determinístico; o guardrail de saída confere o texto do modelo contra os números das tools.</p></div>
+        <div class="dec"><b>Só a cliente contrata</b><p><strong>Por quê:</strong> consentimento explícito e auditável (canal, frase, horário). "Sim" digitado nunca contrata; só o card de confirmação no app.</p></div>
+        <div class="dec"><b>Nenhum dado mockado</b><p><strong>Por quê:</strong> a jornada precisa funcionar com os casos difíceis reais: renda ausente no extrato, nada cabe, mais de um acordo. Renda = média das entradas; ausente, a zera.ai pergunta.</p></div>
+        <div class="dec"><b>Humano é uma saída correta</b><p><strong>Por quê:</strong> a cliente nunca vê um selo técnico. Um bloqueio vira uma mensagem acolhedora com "falar com uma pessoa" em primeiro lugar; o bloqueio fica registrado no backend.</p></div>
+        <div class="dec"><b>Ambos ganham</b><p><strong>Por quê:</strong> o banco mantém o saldo devedor e recebe os juros do acordo (1,8% a.m.); a cliente troca 8–14% a.m. por parcela que cabe e prazo definido (12–60x).</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== NÍVEL 2 ===================== -->
+<section class="slide" id="nivel2">
+  <div class="eyebrow">C4 · Nível 2 · Containers</div>
+  <h2>Um serviço no Cloud Run com sete peças, e três serviços gerenciados em volta</h2>
+  <p class="lead">Dentro da linha tracejada, tudo roda na mesma imagem. Fora dela, o Google Cloud faz o que é gerenciado: modelo, dados e observabilidade.</p>
+
+  <div class="diagram">
+    <svg viewBox="0 0 1200 930" role="img" aria-label="Diagrama de containers: UI, API, orquestrador da experiência, agente ADK, guardrails, base de conhecimento (RAG leve), contexto e estado, motor determinístico, acesso a dados e observabilidade dentro do Cloud Run; Vertex AI, BigQuery e Cloud Observability fora">
+      <defs>
+        <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--line)"/></marker>
+      </defs>
+
+      <!-- fronteira -->
+      <rect class="boundary" x="30" y="110" width="790" height="770"/>
+      <text class="btitle" x="300" y="132">Cloud Run · serviço <tspan class="mono">zera</tspan> · us-central1 · 1 instância</text>
+      <text class="bsub" x="300" y="148">1 vCPU · 1 GiB · concurrency 40 · Docker multi-stage</text>
+      <text class="bsub" x="300" y="162">usuário sem privilégio · identidade do serviço (sem chave)</text>
+
+      <!-- setas -->
+      <path class="arrow" d="M170,80 L170,168" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="180" y="128">HTTPS</text>
+
+      <path class="arrow" d="M280,235 L348,235" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="292" y="222">JSON</text>
+      <text class="lbl" x="288" y="256">NDJSON</text>
+
+      <path class="arrow" d="M420,300 L262,338" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="120" y="322">evento(ação) · 0 tokens</text>
+
+      <path class="arrow" d="M450,300 L450,338" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="460" y="324">Runner · /chat/stream · HITL</text>
+
+      <path class="arrow" d="M280,400 L348,400" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="286" y="422">explicador</text>
+
+      <path class="arrow" d="M550,400 L613,400" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="556" y="422">callbacks</text>
+
+      <path class="arrow" d="M790,380 L878,380" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="806" y="366">generate</text>
+      <text class="lbl" x="808" y="404">sanitize</text>
+
+      <path class="arrow" d="M450,468 L450,508" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="460" y="490">16 function tools</text>
+
+      <path class="arrow" d="M280,462 L348,514" style="marker-end:url(#arr2)"/>
+
+      <path class="arrow" d="M348,584 L282,584" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="298" y="544">perfil</text>
+      <text class="lbl" x="286" y="558">capacidade</text>
+      <text class="lbl" x="292" y="572">acordos</text>
+
+      <path class="arrow" d="M552,462 L700,508" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="640" y="480">consultar_conhecimento</text>
+
+      <path class="arrow" d="M790,831 L878,831" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="800" y="818">OTLP · JSON</text>
+
+      <path class="arrow" d="M170,638 L170,678" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="180" y="663">carregar perfil · salvar estado</text>
+
+      <path class="arrow" d="M280,725 L878,725" style="marker-end:url(#arr2)"/>
+      <text class="lbl" x="330" y="712">query → tabelas (sem job) → snapshot embarcado · estado/eventos/telemetria por streaming insert</text>
+
+      <!-- cliente -->
+      <foreignObject x="60" y="10" width="220" height="70"><div class="node person"><span class="person-icon">pessoa</span><div class="nt">Cliente (pelo app Itaú)</div></div></foreignObject>
+
+      <!-- linha 1 -->
+      <foreignObject x="60" y="170" width="220" height="130"><div class="node ct"><div class="nt">App mobile (UI)</div><div class="nk">React 19 · Vite 8 · Tailwind 4</div><div class="nd">Perfis → onboarding → preferências → home com gatilho → experiência guiada · conversa com cards e card de confirmação.</div></div></foreignObject>
+      <foreignObject x="350" y="170" width="200" height="130"><div class="node ct"><div class="nt">API</div><div class="nk">FastAPI · Python 3.12</div><div class="nd">REST + stream NDJSON; roteamento determinístico (abertura, saudações, botão Contratar); request id e logs.</div></div></foreignObject>
+
+      <!-- linha 2 -->
+      <foreignObject x="60" y="340" width="220" height="128"><div class="node ct"><div class="nt">Orquestrador da experiência</div><div class="nk">zera_agent/experiencia.py</div><div class="nd">Máquina de estados, proatividade (7 checks), contrato estruturado, intenção sem LLM.</div></div></foreignObject>
+      <foreignObject x="350" y="340" width="200" height="128"><div class="node ct"><div class="nt">Agente ADK</div><div class="nk">ADK 2.10 · Gemini 3.8 Flash</div><div class="nd">Entende, conduz e explica. 16 tools determinísticas; 3 pausam até a confirmação no app (HITL).</div></div></foreignObject>
+      <foreignObject x="615" y="340" width="175" height="128"><div class="node ct"><div class="nt">Guardrails</div><div class="nk">guardrails.py · Model Armor</div><div class="nd">Entrada · tool · saída, como callbacks do ADK; Model Armor opcional; números conferidos com o motor.</div></div></foreignObject>
+
+      <!-- linha 3 -->
+      <foreignObject x="60" y="510" width="220" height="128"><div class="node ct"><div class="nt">Contexto e estado</div><div class="nk">zera_agent/contexto.py</div><div class="nd">Perfil + capacidade em memória; acordos (vários), consentimentos, gatilhos, renda/gastos informados; relógio da demo.</div></div></foreignObject>
+      <foreignObject x="350" y="510" width="200" height="128"><div class="node ct"><div class="nt">Motor determinístico</div><div class="nk">motor/ · Python puro</div><div class="nd">Capacidade, priorização, cenários por prazo, hoje × nova opção, benefícios, termos/CET, acordo, respiro, amortização, gatilhos.</div></div></foreignObject>
+      <foreignObject x="600" y="510" width="190" height="135"><div class="node ct"><div class="nt">RAG leve</div><div class="nk">conhecimento/*.md</div><div class="nd">Política, FAQ e glossário; busca lexical, top-3 trechos como evidência — nunca números; instruções embutidas filtradas.</div></div></foreignObject>
+
+      <!-- linha 4 -->
+      <foreignObject x="60" y="680" width="220" height="100"><div class="node ct"><div class="nt">Acesso a dados</div><div class="nk">loader.py · repositório de estado</div><div class="nd">Fonte rotulada; fallbacks se o IAM recusa.</div></div></foreignObject>
+
+      <!-- transversal -->
+      <foreignObject x="60" y="800" width="730" height="62"><div class="node ct band"><div class="nt">Observabilidade & FinOps</div><div class="nd">todas as camadas emitem spans OTel, métricas p50/p95, logs JSON com request/trace id, tokens e custo por jornada (<span class="mono">observabilidade.py</span>). Só no backend.</div></div></foreignObject>
+
+      <!-- externos -->
+      <foreignObject x="880" y="320" width="290" height="120"><div class="node ext"><div class="nt">Vertex AI</div><div class="nd"><b>Gemini 3.8 Flash</b> · endpoint <span class="mono">global</span> · temperatura 0,2 · credencial = identidade do serviço.<br><b>Model Armor</b> · template <span class="mono">zera-guardrails</span>.</div></div></foreignObject>
+      <foreignObject x="880" y="800" width="290" height="120"><div class="node ext"><div class="nt">Cloud Trace · Monitoring · Logging</div><div class="nd">Telemetry API (OTLP): spans <span class="mono">invocation · call_llm · execute_tool · motor.*</span>; métricas <span class="mono">zera.*</span>; métricas de log, alerta 5xx, Billing Budgets.</div></div></foreignObject>
+      <foreignObject x="880" y="660" width="290" height="130"><div class="node ext"><div class="nt">BigQuery · dataset <span class="mono">zera</span></div><div class="nd">extrato (partição/cluster) · features · <span class="mono">kmeans_perfis</span> (BigQuery ML) · perfis_demo · perfil_cliente · dividas_derivadas · estado_cliente (append-only) · eventos · telemetria.</div></div></foreignObject>
+    </svg>
+  </div>
+
+  <div class="read">
+    <div>
+      <h3>Como as peças conversam</h3>
+      <ul class="rels">
+        <li><b>UI → API</b><span>a experiência guiada manda <code>{ação, payload}</code> e recebe uma resposta estruturada (<code>response_type</code>); o chat recebe um evento por linha: <code>etapa · tool_call · tool_result · card · texto · hitl · fim</code>.</span></li>
+        <li><b>API → Orquestrador</b><span>o fluxo guiado inteiro roda sem modelo (0 tokens); o Gemini só entra para explicar ("por que essa opção?") com os fatos do estado.</span></li>
+        <li><b>API → Agente</b><span>cada mensagem livre vai ao <code>Runner</code> do ADK; saudações, agradecimentos e o botão <b>Contratar</b> são resolvidos antes, sem modelo.</span></li>
+        <li><b>Agente → Guardrails → Vertex AI</b><span>toda chamada ao Gemini passa por <code>before_model</code> e <code>after_model</code>; toda tool por <code>before_tool</code> (consentimento) e <code>after_tool</code> (números permitidos).</span></li>
+        <li><b>Agente → Motor</b><span>16 function tools; as três com efeito (<code>fechar_acordo</code>, <code>acionar_respiro</code>, <code>amortizar</code>) pausam a invocação até a confirmação no app.</span></li>
+        <li><b>Agente → Base de conhecimento</b><span><code>consultar_conhecimento</code> recupera até 3 trechos da política de renegociação, FAQ e glossário para explicar termos e regras (respiro, cheque especial, negativação). Números nunca vêm daqui: só das tools do motor.</span></li>
+        <li><b>Contexto → Dados → BigQuery</b><span>uma leitura por sessão; estado em <code>zera.estado_cliente</code> (append-only) com fallback JSON local.</span></li>
+      </ul>
+    </div>
+    <div>
+      <h3>Decisões que moldam este nível</h3>
+      <div class="decs">
+        <div class="dec"><b>Um serviço, uma instância</b><p><strong>Por quê:</strong> um deploy, uma URL, custo previsível. Sessões do ADK e cache de contexto ficam em processo sem split-brain. <strong>Evolução:</strong> <code>VertexAiSessionService</code> (Agent Engine) libera <code>max-instances &gt; 1</code>.</p></div>
+        <div class="dec"><b>ADK com HITL nativo + botão determinístico</b><p><strong>Por quê:</strong> <code>FunctionTool(require_confirmation=True)</code> pausa a tool até a resposta humana; o botão <b>Contratar</b> (<code>POST /chat/contratar</code>) abre o mesmo card sem depender de o modelo "decidir" chamar a tool. Os dois caminhos produzem os mesmos eventos.</p></div>
+        <div class="dec"><b>Guardrails como callbacks, em três camadas</b><p><strong>Por quê:</strong> a entrada bloqueia sem chamar o modelo (injeção, morse/base64, PII, fora de escopo, 3 bloqueios → humano); a saída substitui pressão, promessa e número fora das tools. Números valem a sessão inteira e caducam quando o estado muda.</p></div>
+        <div class="dec"><b>Dados: query → tabelas → snapshot</b><p><strong>Por quê:</strong> no projeto do evento a identidade de runtime não pode criar jobs no BigQuery e ninguém do time altera IAM. O deploy exporta o resultado do k-means com a credencial de quem publica; em runtime a API tenta a query, depois <code>tabledata.list</code>, depois o snapshot, sempre rotulando a fonte.</p></div>
+        <div class="dec"><b>Experiência guiada sem LLM</b><p><strong>Por quê:</strong> 10 telas previsíveis, testáveis por matriz estado × ação, custo zero de tokens. O modelo fica onde agrega: entender intenção e explicar.</p></div>
+        <div class="dec"><b>Observabilidade só no backend</b><p><strong>Por quê:</strong> a cliente não precisa ver tokens nem bloqueios. Traces, métricas, logs e custo por jornada vão para o Cloud Observability e para <code>/metrics</code>; a banca vê lá.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== UM TURNO ===================== -->
+<section class="slide" id="turno">
+  <div class="eyebrow">Dinâmica · um turno de conversa</div>
+  <h2>O caminho de uma mensagem até a resposta, e o caminho de um toque em "Contratar"</h2>
+  <p class="lead">A sequência Entender → Opções → Escolher → Confirmar no app → Acompanhar só avança quando a cliente pede cada etapa.</p>
+
+  <ol class="flow" aria-label="Turno de conversa">
+    <li class="st"><b>Cliente digita</b><span>"Quais opções cabem no meu bolso?"</span></li>
+    <li class="st"><b>Roteamento na API</b><span>saudação/agradecimento → resposta fixa (0 tokens); senão vai ao agente</span></li>
+    <li class="st"><b>Guardrail de entrada</b><span>Model Armor, injeção, PII redigida, escopo, vulnerabilidade</span></li>
+    <li class="st"><b>Gemini decide</b><span>chama <code>montar_cenarios</code> (ou pergunta a renda se o histórico não tem entradas)</span></li>
+    <li class="st"><b>Motor calcula</b><span>cenários por prazo, viabilidade, rótulos; <code>numeros_permitidos</code></span></li>
+    <li class="st"><b>Guardrail de saída</b><span>número fora das tools → mensagem acolhedora com "falar com uma pessoa"</span></li>
+    <li class="st"><b>Eventos em stream</b><span><code>etapa · tool_call · card · texto · fim</code> renderizados conforme chegam</span></li>
+    <li class="st hitl"><b>Toque em Contratar</b><span><code>/chat/contratar</code> → card de confirmação com os números do motor → <code>/chat/confirmar</code> executa</span></li>
+  </ol>
+
+  <div class="paths">
+    <div class="path"><b>Via do modelo (HITL nativo)</b>O Gemini chama <code>fechar_acordo</code> → o ADK emite <code>adk_request_confirmation</code> e pausa → card no app → <code>FunctionResponse(confirmed, frase)</code> → a tool roda com consentimento <span class="mono">canal=hitl_app</span>. Recusa → <code>acao_recusada</code>, nada executa.</div>
+    <div class="path"><b>Via do botão (determinística)</b>Cada opção do card tem um botão. A API valida o cenário na sessão, abre o mesmo card (<span class="mono">request_id btn_…</span>) e, na confirmação, executa <code>fechar_por_cenario</code> no motor com consentimento <span class="mono">canal=botao_app</span>. Zero tokens.</div>
+    <div class="path"><b>Dado insuficiente</b>Sem entradas no histórico, as tools de cálculo recusam (<code>renda_desconhecida</code>). A zera.ai pergunta; <code>informar_renda</code> grava com fonte "informada pela cliente" e tudo é recalculado. Nada é imputado.</div>
+  </div>
+</section>
+
+<!-- ===================== SEQUÊNCIAS ===================== -->
+<section class="slide" id="sequencias">
+  <div class="eyebrow">Diagramas de sequência · exemplos da solução</div>
+  <h2>Quatro caminhos que a demo percorre, passo a passo</h2>
+  <p class="lead">Cada diagrama mostra quem faz o quê: o modelo entende e explica, o motor calcula, os guardrails conferem e a cliente confirma.</p>
+
+  <div class="seqs">
+    <div class="seq">
+      <h3>1 · Um turno de conversa — "Quais opções cabem no meu bolso?"</h3>
+      <p>O roteamento determinístico trata saudações e opções digitadas; o resto vai ao agente. Toda chamada ao Gemini passa pelos guardrails de entrada e de saída; toda tool, pelo de consentimento e pelo registro de números.</p>
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor C as Cliente (app)
+  participant API as API FastAPI
+  participant R as Runner ADK
+  participant G as Guardrails
+  participant M as Gemini 3.8 Flash
+  participant T as Tools · Motor
+  C->>API: POST /chat/stream "Quais opções cabem no meu bolso?"
+  API->>API: roteamento determinístico (saudação? opção digitada?) → não
+  API->>R: run_async(mensagem)
+  R->>G: before_model (injeção, PII, escopo, vulnerabilidade)
+  G-->>R: ok
+  R->>M: generate_content (instruções + histórico + tools)
+  M-->>R: function_call montar_cenarios(parcela_alvo=0)
+  R->>G: before_tool (exige consentimento? não)
+  R->>T: montar_cenarios → cenários C1…Cn + numeros_permitidos
+  R->>G: after_tool (números da sessão)
+  R-->>API: tool_call · tool_result · card cenários
+  API-->>C: NDJSON: etapa "opções" + card (Contratar por opção)
+  R->>M: generate_content (resultado da tool)
+  M-->>R: "A melhor é a C1… 1) Contratar a C1 2) Entender por quê 3) Falar com uma pessoa"
+  R->>G: after_model (pressão, promessa, PII, números ∉ tools)
+  alt números conferem
+    G-->>R: texto aprovado
+  else número fora das tools
+    G-->>R: resposta acolhedora + escalar_sugerido (bloqueio só na observabilidade)
+  end
+  R-->>API: texto final
+  API->>API: extrai "1) 2) 3)" → opcoes (botões)
+  API-->>C: texto + botões + fim (sugestões)
+      </pre>
+    </div>
+
+    <div class="seq">
+      <h3>2 · Contratar pelo botão — via determinística com confirmação humana</h3>
+      <p>O botão não depende de o modelo "decidir" chamar a tool: a API valida o cenário na sessão, abre o card de confirmação com os números do motor e, só depois do toque, executa. Nada passa pelo Gemini.</p>
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor C as Cliente (app)
+  participant API as API FastAPI
+  participant S as Sessão ADK (estado)
+  participant Mo as Motor (fechar_por_cenario)
+  participant E as Estado do cliente (BigQuery · JSON)
+  C->>API: POST /chat/contratar {cenario_id: "C1"}
+  API->>S: C1 existe em state.cenarios e é viável?
+  S-->>API: sim → request_id btn_…
+  API-->>C: card HITL: parcela, prazo, total, saldo devedor, juros
+  Note over C: passo humano — "Confirmo a contratação" ou "Agora não"
+  C->>API: POST /chat/confirmar/stream {request_id, confirmed: true, frase}
+  API->>E: consentimento (canal=botao_app, frase, data/hora)
+  API->>Mo: fechar_por_cenario(C1)
+  Mo-->>API: acordo (componente por dívida, termos, CET)
+  API->>E: acordo salvo (append-only)
+  API->>S: histórico: "[Toquei em Contratar C1 e confirmei]" + "Pronto: acordo fechado…" + ultimas_opcoes
+  API-->>C: etapa confirmar → tool_call/tool_result → card acordo → texto + botões → etapa acompanhar
+      </pre>
+    </div>
+
+    <div class="seq">
+      <h3>3 · HITL nativo do ADK — quando o modelo decide chamar <code>fechar_acordo</code></h3>
+      <p>As tools com efeito são <code>FunctionTool(require_confirmation=True)</code>: o ADK pausa a invocação e só executa com a resposta humana. Um "sim" digitado nunca contrata.</p>
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor C as Cliente (app)
+  participant API as API FastAPI
+  participant R as Runner ADK
+  participant M as Gemini 3.8 Flash
+  participant T as fechar_acordo (require_confirmation)
+  C->>API: "quero fechar a C1"
+  API->>R: run_async
+  R->>M: generate_content
+  M-->>R: function_call fechar_acordo(plano_id="C1")
+  R-->>API: adk_request_confirmation(originalFunctionCall) — invocação pausada
+  API-->>C: card HITL com os números da sessão (nunca o texto do modelo)
+  C->>API: POST /chat/confirmar {request_id, confirmed, frase}
+  API->>R: FunctionResponse(adk_request_confirmation, {confirmed, frase_cliente})
+  alt confirmado
+    R->>T: executa (consentimento canal=hitl_app + frase)
+    T-->>R: acordo
+    R->>M: resultado → texto
+    R-->>API: card acordo + texto
+  else recusado
+    R-->>API: acao_recusada — a tool não roda ("nada foi contratado")
+  end
+  API-->>C: eventos NDJSON (etapa, card, texto, fim)
+      </pre>
+    </div>
+
+    <div class="seq">
+      <h3>4 · Proatividade e dado insuficiente — o balão só aparece se as 7 pré-condições passam</h3>
+      <p>Sem renda no extrato não há cálculo nem abordagem proativa: a zera.ai pergunta, a cliente informa e tudo é recalculado com o valor dito por ela.</p>
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor C as Cliente
+  participant App as App (home)
+  participant API as API FastAPI
+  participant D as Dados (BigQuery · snapshot)
+  participant Mo as Motor
+  participant X as Orquestrador da experiência
+  App->>API: GET /v1/clientes/{id}/proativa
+  API->>D: 1 leitura: perfil_cliente (12 meses) + dividas_derivadas
+  D-->>API: perfil (renda = média das entradas, dívidas rotuladas)
+  API->>Mo: detectar_gatilhos
+  Mo-->>API: entrada_rotativo (cheque especial a 8% a.m.)
+  API->>X: avaliar_proatividade (permissão, gatilho, oportunidade, benefício, contexto, ação, frequência)
+  alt renda não identificada
+    X-->>App: {silent: true, reason: "sem contexto suficiente"} → sem balão
+    C->>API: no chat: "quanto eu devo?" → tools de cálculo recusam (renda_desconhecida) → a zera.ai pergunta
+    C->>API: "minha renda é 2.500" → informar_renda → capacidade e cenários recalculados
+  else tudo ok
+    X-->>App: PROACTIVE_MESSAGE "Diminua suas parcelas"
+    C->>App: toca no balão → experiência guiada (0 tokens) ou conversa
+  end
+      </pre>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== DADOS E ALGORITMOS ===================== -->
+<section class="slide" id="dados">
+  <div class="eyebrow">Dados e algoritmos · decisões</div>
+  <h2>De onde vem cada número e como ele é calculado</h2>
+  <p class="lead">Nenhum dado mockado: a base do evento entra por um pipeline versionado em SQL, a segmentação roda no BigQuery ML e todo cálculo financeiro é uma fórmula testada no motor. O modelo de linguagem não participa de nenhum passo abaixo.</p>
+
+  <ol class="flow" aria-label="Pipeline de dados">
+    <li class="st"><b>Base do evento</b><span><code>hackathon_dados.extrato_sintetico</code>: lançamentos por cliente, 12 meses</span></li>
+    <li class="st"><b>zera.extrato</b><span>partição por dia, cluster por <code>id_usuario</code>; classe da transação por regras (renda, dívida, parcela, essencial, assinatura, outros)</span></li>
+    <li class="st"><b>perfil_cliente</b><span>12 meses em arrays; renda = média das entradas; CV da renda; meses no vermelho</span></li>
+    <li class="st"><b>kmeans_perfis</b><span><code>features_cliente</code> → k-means++ no BigQuery ML (k=4, padronizado) → <code>ML.PREDICT</code></span></li>
+    <li class="st"><b>cluster-alvo</b><span>índice de endividamento = média de z-scores → <code>perfil_clusters</code></span></li>
+    <li class="st"><b>perfis_demo + dívidas</b><span>clientes reais do cluster-alvo; medoide = persona "Cleide"; dívidas derivadas rotuladas "estimado do extrato"</span></li>
+    <li class="st"><b>Motor</b><span>capacidade → prioridades → cenários → gatilhos, em memória (&lt; 10 ms, 0 tokens)</span></li>
+    <li class="st"><b>estado · eventos · telemetria</b><span>append-only no BigQuery → funil, cumprimento D+90, custo por jornada</span></li>
+  </ol>
+
+  <div class="read">
+    <div>
+      <h3>Fórmulas do motor (motor/, testadas)</h3>
+      <div class="formulas">
+        <div><em>renda</em>média(entradas tipo E, 12 meses) · sobra[m] = renda[m] − essenciais[m] − compromissos[m]</div>
+        <div><em>capacidade</em>parcela_máx = 0,75 × max(0, P25(sobra) − 0,05 × renda_mediana) · conforto = 0,70 × parcela_máx se CV(renda) ≥ 0,12</div>
+        <div><em>cenário(n)</em>parcela = Price(saldo_consolidado, 1,8% a.m., n), n ∈ {12, 18, 24, 36, 48, 60}</div>
+        <div><em>viável</em>parcela + mantidas ≤ parcela_máx  e  #{m : sobra[m] − colchão &lt; parcela} ≤ respiros (2)</div>
+        <div><em>ambos ganham</em>custo_total = entrada + n × parcela = saldo_original + juros_acordo · ganho_banco = juros_acordo</div>
+        <div><em>hoje</em>pagamento = Σ(parcela ou juros) · juros/mês = Σ saldo_i × taxa_i · projeção(n) = Σ Price(saldo_i, taxa_i, n) × n</div>
+        <div><em>nada cabe</em>parcela_disp = min(parcela_máx, (respiros+1)-ésima menor sobra líquida) − mantidas · entrada_nec = saldo − PV(parcela_disp, 1,8%, 60)</div>
+        <div><em>prioridade</em>custo_mensal = saldo × taxa + peso(consequência: negativação)</div>
+        <div><em>segmento</em>índice_endividamento = média dos z-scores (vermelho, pior saldo, serviço de dívida, parcelas, rotativo, empréstimo)</div>
+        <div><em>gasto invisível</em>essenciais &lt; 30% da renda  ou  sobra &gt; 55% da renda → perguntar</div>
+      </div>
+    </div>
+    <div>
+      <h3>Como validamos</h3>
+      <ul class="rels">
+        <li><b>Motor</b><span>97 testes sem rede; sensibilidade documentada: +R$ 80/mês de gasto muda a recomendação para 60x, +R$ 300 → "nenhuma opção cabe" com diagnóstico.</span></li>
+        <li><b>Segmentação</b><span><code>ML.EVALUATE</code> do modelo de produção: Davies-Bouldin 1,569 e distância quadrática média 7,286 (k = 4, base completa). A curva por k é gerada por <code>dados/avaliar_k.py</code> e entra no bloco abaixo.</span></li>
+        <li><b>Dados</b><span>amostra local é export real do BigQuery; produção lê <code>zera.*</code> (query → tabelas → snapshot) com a fonte sempre rotulada; testes rodam sobre a amostra real.</span></li>
+        <li><b>Números do modelo</b><span>golden set de ataques e de números inventados; todo número do texto precisa existir nas tools da sessão, na fala da cliente ou no gatilho.</span></li>
+        <li><b>Premissas</b><span>alavancas em <code>politicas.py</code> (percentil, colchão, fator, taxa, prazos, limiares) são fictícias e documentadas — Crédito define as reais.</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="quali">
+    <h3 style="font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-family:var(--mono);font-weight:500">Qualidade da segmentação (k-means, BigQuery ML)</h3>
+    <!-- DB:INICIO -->
+    <div class="tile">
+      <b>Modelo em produção · <code>zera.kmeans_perfis</code> · k = 4 · base completa (1.000 clientes, 467.585 lançamentos)</b>
+      <div class="stats">
+        <div><b>1,569</b><span>Davies-Bouldin (menor = clusters mais compactos e separados)</span></div>
+        <div><b>7,286</b><span>distância quadrática média ao centróide</span></div>
+        <div><b>160 · 16,0%</b><span>clientes no cluster-alvo · participação na base</span></div>
+        <div><b>3,92</b><span>índice de endividamento do cluster-alvo (vs 1,71 / 0,51 / −1,48)</span></div>
+      </div>
+      <p style="margin-top:10px">Curva Davies-Bouldin por k (2…8): gerada com <code>uv run python -m dados.avaliar_k</code>, que treina os modelos no BigQuery ML com as mesmas 11 features, grava <code>zera.kmeans_avaliacao</code> e substitui este bloco pelo gráfico.</p>
+    </div>
+    <!-- DB:FIM -->
+  </div>
+
+  <div class="tbl">
+    <table>
+      <thead><tr><th>#</th><th>Decisão de dados / algoritmo</th><th>Alternativa descartada</th><th>Por quê</th><th>Como se verifica</th></tr></thead>
+      <tbody>
+        <tr><td>A1</td><td><b>Fonte única: base do evento</b>; fixtures só em testes; dívidas inferidas rotuladas</td><td>Persona sintética carregada pela API</td><td>A jornada precisa provar-se nos casos reais: renda ausente, nada cabe, mais de um acordo.</td><td>Rótulo de fonte na UI e no <code>/health</code>; <code>test_dados.py</code></td></tr>
+        <tr><td>A2</td><td><b>Renda = média mensal das entradas</b> (tipo E, 12 meses); ausente → perguntar</td><td>Imputar pela mediana do cluster; salário fixo</td><td>Fonte explicável para a cliente; imputar decidiria por ela.</td><td><code>renda_fonte</code> exibida; testes do fluxo de renda</td></tr>
+        <tr><td>A3</td><td><b>Classificação de transações por regras versionadas</b> (SQL e pandas espelhados)</td><td>Classificador ML de descrição</td><td>Auditável, sem treino, idêntico nos modos BigQuery e amostra.</td><td><code>segmentacao.py</code> = <code>zera_tabelas.sql</code></td></tr>
+        <tr><td>A4</td><td><b>Features proporcionais + sinais</b> (essenciais/saídas, serviço de dívida/saídas, meses no vermelho, pior saldo, rotativo, empréstimo, CV da renda)</td><td>Valores absolutos</td><td>Robustas quando a renda não aparece no extrato; comparáveis entre clientes.</td><td>Padronização antes do k-means</td></tr>
+        <tr><td>A5</td><td><b>k-means++ no BigQuery ML</b>, k=4, features padronizadas</td><td>DBSCAN/hierárquico; só regras</td><td>Roda onde os dados estão, 1 job sobre 1 linha por cliente, reprodutível (<code>CREATE OR REPLACE MODEL</code>).</td><td><code>ML.EVALUATE</code> + estabilidade dos centróides (pendência declarada)</td></tr>
+        <tr><td>A6</td><td><b>Cluster-alvo por índice de endividamento</b> (média de z-scores) e <b>persona = medoide</b></td><td>Escolha manual; persona inventada</td><td>Regra explícita e auditável; "Cleide" é o cliente real mais típico do segmento, com identidade fictícia.</td><td><code>perfil_clusters</code>, <code>perfis_demo</code> por distância</td></tr>
+        <tr><td>A7</td><td><b>Dívidas derivadas do extrato por regras</b> (saldo &lt; 0 → cheque especial; k/N → crediário; descrição → cartão/empréstimo)</td><td>Cadastro de contratos (inexistente no evento)</td><td>O extrato é o que existe; o rótulo "estimado do extrato" evita passar estimativa por fato.</td><td>Integração com cadastro real na evolução</td></tr>
+        <tr><td>A8</td><td><b>Capacidade pelo P25 da sobra</b>, colchão 5%, fator 0,75, conforto 70% com renda irregular, 2 respiros</td><td>Média da sobra; % fixo da renda</td><td>Conservador: cabe em 3 de 4 meses; o colchão absorve variação; o fator evita apertar.</td><td>Sensibilidade (+R$ 80 → 60x; +R$ 300 → nada cabe)</td></tr>
+        <tr><td>A9</td><td><b>Priorização por custo mensal + consequência</b></td><td>Avalanche puro (taxa) / snowball (saldo)</td><td>O que dói por mês e o risco de negativação pesam mais que a taxa nominal.</td><td><code>test_motor.py</code></td></tr>
+        <tr><td>A10</td><td><b>Um cenário por prazo</b> (12–60x), Price a 1,8% a.m. sobre o saldo integral; rótulos recomendado / mais barato / mais folga; entrada quita as mais caras primeiro</td><td>Desconto no saldo; parcela contínua otimizada</td><td>"Ambos ganham": o banco mantém o saldo e recebe os juros do acordo; prazos discretos são o catálogo real.</td><td>Total = saldo + juros confere com Price</td></tr>
+        <tr><td>A11</td><td><b>Nada cabe → diagnóstico numérico</b> (parcela disponível, entrada necessária) e caminhos</td><td>Mensagem genérica</td><td>A cliente sai com número e opção (entrada, gasto a rever, humano).</td><td>Cenário "nenhuma opção" nos testes</td></tr>
+        <tr><td>A12</td><td><b>Hoje × nova opção like-for-like</b> no mesmo prazo; claims só quando o número comprova</td><td>"Total mágico" da dívida de hoje</td><td>Sem prazo não existe total; comparar no mesmo prazo é honesto.</td><td><code>beneficios.validar_beneficios</code></td></tr>
+        <tr><td>A13</td><td><b>Gatilhos em ordem de urgência</b>: entrada no rotativo/cheque &gt; pré-negativação (≥ 45 d) &gt; risco de parcela (D-3) &gt; dinheiro extra (≥ 40% da renda mediana ou 13º/IRPF/FGTS/PLR)</td><td>Só o rotativo</td><td>Consequência e prazo definem quem fala primeiro.</td><td><code>test_experiencia.py</code>; scheduled query diária na evolução</td></tr>
+        <tr><td>A14</td><td><b>Guardrail numérico</b>: número no texto ∈ tools da sessão ∪ ditos pela cliente ∪ gatilho, com tolerância; caduca quando o estado muda</td><td>Confiar no modelo</td><td>Fecha o ciclo "o LLM nunca calcula".</td><td><code>test_guardrails_ataques.py</code></td></tr>
+        <tr><td>A15</td><td><b>RAG leve</b>: busca lexical top-3 sobre política, FAQ e glossário, sanitizada</td><td>Embeddings + vector store</td><td>Três arquivos curtos: zero infraestrutura, auditável; nunca fonte de números.</td><td><code>test_conhecimento.py</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== DECISÕES ===================== -->
+<section class="slide" id="decisoes">
+  <div class="eyebrow">Decisões técnicas · resumo</div>
+  <h2>Decisões de arquitetura: o que escolhemos, o que descartamos e o que isso custa</h2>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>#</th><th>Decisão</th><th>Alternativa descartada</th><th>Por quê</th><th>Consequência</th></tr></thead>
+      <tbody>
+        <tr><td>D1</td><td><b>Motor determinístico separado do LLM</b></td><td>Gemini calculando (code execution / fórmulas no prompt)</td><td>Exatidão auditável; testes unitários sobre fórmulas; ciclo fechado com o guardrail de números.</td><td>O prompt precisa direcionar o uso das tools; menos tokens.</td></tr>
+        <tr><td>D2</td><td><b>Google ADK</b> com <code>require_confirmation</code></td><td>Pausa/retomada à mão; outro framework</td><td>HITL, sessões, callbacks e tracing prontos; o mesmo agente no <code>adk web</code>, na API e no explicador.</td><td>Sessões em memória exigem 1 instância (ou Agent Engine).</td></tr>
+        <tr><td>D3</td><td><b>Botão Contratar determinístico</b></td><td>Confiar só na decisão do modelo</td><td>O modelo às vezes explica em vez de agir; o botão garante a contratação com os números do motor.</td><td>Dois caminhos, mesmos eventos; <code>canal</code> distingue.</td></tr>
+        <tr><td>D4</td><td><b>Roteamento antes do agente</b> + trilha de etapas derivada das tools</td><td>Mandar tudo ao modelo</td><td>UX previsível, 0 tokens; a sequência HITL só aparece quando a cliente entra no fluxo.</td><td>Regex pt-BR mantida na API.</td></tr>
+        <tr><td>D5</td><td><b>Números válidos por sessão</b>, invalidados por mudança de estado</td><td>Reset a cada turno</td><td>Evita falsos "número fora das tools" quando a cliente cita um valor mostrado antes.</td><td><code>MUTADORES_DE_ESTADO</code> lista as tools que alteram perfil/acordo.</td></tr>
+        <tr><td>D6</td><td><b>Bloqueio vira hand-off humano</b>, sem selo na UI</td><td>Mostrar "guardrail de saída"</td><td>Encaminhar é saída correta; a cliente não deve ver linguagem técnica.</td><td>Bloqueio registrado em métrica + evento.</td></tr>
+        <tr><td>D7</td><td><b>Renda = média das entradas; ausente → perguntar</b></td><td>Imputar pela mediana do cluster</td><td>Fonte real e explicável; imputar decidiria pela cliente.</td><td>Um turno a mais nos perfis sem entradas.</td></tr>
+        <tr><td>D8</td><td><b>Pergunta de gasto fixo guiada por dados</b></td><td>Perguntar sempre</td><td>Não perguntar o que já sabemos; a pergunta traz os números que a motivaram.</td><td>Limiares 30% / 55% em <code>politicas.py</code>.</td></tr>
+        <tr><td>D9</td><td><b>BigQuery + BigQuery ML</b> (k-means) e estado append-only</td><td>Pandas fora do BQ; Firestore</td><td>Processa onde os dados estão; k-means auditável; Firestore não liberado no projeto.</td><td>LGPD por snapshot <code>apagado=true</code>.</td></tr>
+        <tr><td>D10</td><td><b>Snapshot embarcado + leitura sem job</b></td><td>Exigir IAM completo; mock</td><td>Produção tinha de funcionar com dado real mesmo sem <code>bigquery.jobs.create</code>.</td><td>Fonte sempre rotulada; <code>conceder_dataset.py</code> liga o modo ao vivo.</td></tr>
+        <tr><td>D11</td><td><b>Cloud Run, 1 serviço, 1 instância</b>, identidade padrão, repositório existente</td><td>API e agente separados; SA e repositório novos</td><td>Um deploy e uma URL; o projeto não permite criar SA nem repositório — o script detecta e segue.</td><td>Escala horizontal é P1; papéis ideais documentados.</td></tr>
+        <tr><td>D12</td><td><b>Gemini 3.8 Flash no endpoint global</b>, temperatura 0,2</td><td>Pro; <code>us-central1</code></td><td>Latência 1–4 s e custo baixo; a família 3.x é servida em <code>global</code>.</td><td>Fallback <code>gemini-2.5-flash</code> por variável.</td></tr>
+        <tr><td>D13</td><td><b>RAG leve por busca lexical</b> sobre política, FAQ e glossário</td><td>Embeddings + vector store; Vertex AI Search</td><td>Três arquivos curtos: zero infraestrutura, resposta em milissegundos, auditável. O trecho recuperado é evidência para explicar, nunca fonte de números.</td><td>Vertex AI Search é a evolução natural quando a base crescer.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ===================== GCP ===================== -->
+<section class="slide" id="gcp">
+  <div class="eyebrow">Integrações · Google Cloud</div>
+  <h2>Cada serviço, o que faz aqui e como está configurado</h2>
+  <div class="tiles">
+    <div class="tile"><b>Vertex AI · Gemini 3.8 Flash</b><span class="nk">GOOGLE_GENAI_USE_VERTEXAI=1 · LOCATION=global</span><p>Modelo do agente. Credencial = identidade do serviço, sem chave em variável. Fallback estável <code>gemini-2.5-flash</code>.</p></div>
+    <div class="tile"><b>Agent Development Kit 2.10</b><span class="nk">LlmAgent · FunctionTool · Runner</span><p>HITL nativo (<code>require_confirmation</code>), 4 callbacks de guardrail, sessões. Topologia multiagente opcional (diagnóstico / negociador / acompanhamento).</p></div>
+    <div class="tile"><b>Model Armor</b><span class="nk">template zera-guardrails · ZERA_MODEL_ARMOR=1</span><p>Sanitização gerenciada de prompt e resposta, em cima dos guardrails em código.</p></div>
+    <div class="tile"><b>BigQuery + BigQuery ML</b><span class="nk">dataset zera · publicar_bq.py</span><p>Extrato particionado/clusterizado, features, k-means++ (k=4), perfis do cluster-alvo, dívidas derivadas, estado, eventos, telemetria. Leitura por sessão ≈ KB.</p></div>
+    <div class="tile"><b>Cloud Run</b><span class="nk">us-central1 · min 1 / max 1 · 1 vCPU · 1 GiB</span><p>API + agente + UI na mesma imagem. Concurrency 40, timeout 300 s, cpu-boost, público para a demo.</p></div>
+    <div class="tile"><b>Cloud Build + Artifact Registry</b><span class="nk">gcloud run deploy --source · --image</span><p>Dockerfile multi-stage (Node → Python slim, uid 10001). O build falha se faltar módulo (<code>import api.main</code>), nunca em runtime.</p></div>
+    <div class="tile"><b>Cloud Trace · Monitoring · Logging</b><span class="nk">ZERA_OTEL_GCP=1 · ZERA_LOG_JSON=1</span><p>Spans do ADK e do motor, métricas <code>zera.*</code> (HITL, roteamento, bloqueios, tokens), logs JSON com trace id, alerta 5xx, orçamento de billing.</p></div>
+    <div class="tile p1"><b>P1 · desenhado, não ligado</b><span class="nk">Agent Engine · Data Transfer + Pub/Sub · Dataform</span><p>Sessões e memória gerenciadas, gatilhos diários por scheduled query, SQL versionado, Gen AI Evaluation para o golden set, Data Policy/DLP.</p></div>
+  </div>
+</section>
+
+<footer>
+  Documentos de referência no repositório: <code>docs/arquitetura-explicativa.md</code> (componentes, integrações, decisões e justificativas) · <code>docs/arquitetura-c4.md</code> (níveis 3 e 4, grafo do ADK, pipeline de dados) · <code>infra/producao.md</code> (runbook) · <code>docs/PRD-MVP.md</code> · <code>docs/quadro-produto.md</code>.
+</footer>
+
+<!-- mermaid-local:inicio -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, theme: 'base', fontFamily: 'IBM Plex Sans, system-ui, sans-serif',
+    themeVariables: { primaryColor: '#FFF0E3', primaryBorderColor: '#EC7000', primaryTextColor: '#15203A', actorBkg: '#FFF0E3', actorBorder: '#EC7000',
+      actorTextColor: '#15203A', signalColor: '#15203A', signalTextColor: '#15203A', lineColor: '#7C8798', noteBkgColor: '#F3F5F8', noteBorderColor: '#D3D9E3',
+      noteTextColor: '#15203A', activationBkgColor: '#FFF0E3', activationBorderColor: '#EC7000', labelBoxBkgColor: '#F3F5F8', labelBoxBorderColor: '#D3D9E3',
+      labelTextColor: '#15203A', loopTextColor: '#15203A', sequenceNumberColor: '#FFFFFF', fontSize: '13px' },
+    sequence: { actorMargin: 28, messageMargin: 34, mirrorActors: false, wrap: true, width: 190, useMaxWidth: true } });
+}
+</script>
+<!-- mermaid-local:fim -->
+<script>
+(function(){
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var links = Array.prototype.slice.call(document.querySelectorAll('.nav a'));
+  function current(){
+    var y = window.scrollY + 90, idx = 0;
+    for (var i = 0; i < slides.length; i++) { if (slides[i].offsetTop <= y) idx = i; }
+    return idx;
+  }
+  function go(i){
+    i = Math.max(0, Math.min(slides.length - 1, i));
+    slides[i].scrollIntoView({block: 'start'});
+  }
+  document.addEventListener('keydown', function(e){
+    if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || (e.key === ' ' && !e.shiftKey)) { e.preventDefault(); go(current() + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp' || (e.key === ' ' && e.shiftKey)) { e.preventDefault(); go(current() - 1); }
+    else if (e.key === 'Home') { e.preventDefault(); go(0); }
+    else if (e.key === 'End') { e.preventDefault(); go(slides.length - 1); }
+  });
+  function mark(){
+    var i = current();
+    links.forEach(function(a, k){ a.classList.toggle('on', k === i); });
+  }
+  window.addEventListener('scroll', mark, {passive: true});
+  mark();
+})();
+</script>
+</body>
+</html>
