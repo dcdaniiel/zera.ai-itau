@@ -62,8 +62,9 @@ gcloud projects add-iam-policy-binding batalha-time-03-vhxk \
 ```
 
 **B) Sem admin — chave de API do Vertex AI (modo express).** A chave autentica o *projeto*, não uma identidade, então não passa pelo
-IAM da conta de runtime. Na sua máquina (precisa de `serviceusage.apiKeys.create`; se for negado, resta o caminho A ou uma chave do
-AI Studio com `ZERA_GEMINI_API_KEY_MODO=developer`):
+IAM da conta de runtime. **Um comando faz tudo** (chave restrita ao Vertex → Secret Manager → leitura para a conta de runtime → deploy;
+a chave nunca aparece no terminal): `./infra/gemini_api_key.sh`. Se a criação da chave for negada (`serviceusage.apiKeys.create`):
+`MODO=developer CHAVE='AIza…' ./infra/gemini_api_key.sh` com uma chave do AI Studio. Passo a passo equivalente, à mão:
 ```bash
 gcloud services api-keys create --project batalha-time-03-vhxk --display-name zera-vertex \
   --api-target=service=aiplatform.googleapis.com --format='value(response.keyString)'   # imprime a chave UMA vez
