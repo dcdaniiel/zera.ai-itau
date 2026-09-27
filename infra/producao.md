@@ -46,6 +46,44 @@ uv run python infra/conceder_dataset.py 27813124245-compute@developer.gserviceac
 Ordem de tentativa em runtime: query (jobs) → leitura direta das tabelas (dataset) → snapshot embarcado. `/health` mostra qual está ativa.
 Se um admin conceder `roles/bigquery.jobUser` + `roles/bigquery.dataEditor` à conta compute, a query volta a ser usada sem redeploy.
 
+## 1c. Gemini em produção: `403 aiplatform.endpoints.predict` (a identidade de runtime não tem `roles/aiplatform.user`)
+
+Sintoma: `/chat/stream` devolve `{"tipo":"erro", "erro":"403 PERMISSION_DENIED … Permission 'aiplatform.endpoints.predict' denied …",
+"dica":"…"}`, a cliente vê "Não consegui responder agora. Nenhum valor foi inventado…" e o log traz `Root node zera failed` /
+`chat_stream falhou`. Tudo o que não usa o modelo (experiência guiada, perfis, proatividade, botão Contratar + HITL) segue funcionando.
+Causa: a conta padrão do Cloud Run (`27813124245-compute@developer.gserviceaccount.com`) não tem papéis no projeto do evento e a
+sua conta não pode conceder (`setIamPolicy` negado). Duas saídas:
+
+**A) Correção definitiva — 1 comando por um admin/organizador do projeto (vale em 1–2 min, sem redeploy):**
+```bash
+gcloud projects add-iam-policy-binding batalha-time-03-vhxk \
+  --member=serviceAccount:27813124245-compute@developer.gserviceaccount.com --role=roles/aiplatform.user
+# no mesmo pedido, se possível (BigQuery ao vivo sem os fallbacks): --role=roles/bigquery.jobUser e --role=roles/bigquery.dataEditor
+```
+
+**B) Sem admin — chave de API do Vertex AI (modo express).** A chave autentica o *projeto*, não uma identidade, então não passa pelo
+IAM da conta de runtime. Na sua máquina (precisa de `serviceusage.apiKeys.create`; se for negado, resta o caminho A ou uma chave do
+AI Studio com `ZERA_GEMINI_API_KEY_MODO=developer`):
+```bash
+gcloud services api-keys create --project batalha-time-03-vhxk --display-name zera-vertex \
+  --api-target=service=aiplatform.googleapis.com --format='value(response.keyString)'   # imprime a chave UMA vez
+# recomendado: Secret Manager (a chave não fica visível no serviço)
+printf '%s' 'AIza…' | gcloud secrets create zera-gemini-key --data-file=- --project batalha-time-03-vhxk
+gcloud secrets add-iam-policy-binding zera-gemini-key --member=serviceAccount:27813124245-compute@developer.gserviceaccount.com \
+  --role=roles/secretmanager.secretAccessor --project batalha-time-03-vhxk
+ZERA_GEMINI_API_KEY_SECRET=zera-gemini-key ./infra/deploy_app.sh
+# se o Secret Manager também for negado (só para a demo; a chave restrita ao alvo aiplatform fica visível a quem tem run.viewer):
+ZERA_GEMINI_API_KEY='AIza…' ./infra/deploy_app.sh
+```
+O agente passa a chave explicitamente ao cliente do SDK (`zera_agent/agent.py::modelo`) — vinda só do ambiente, `GOOGLE_CLOUD_PROJECT`/
+`LOCATION` teriam precedência sobre ela. `/health` mostra `llm_auth: adc | api_key:vertex | api_key:developer`. O deploy termina com uma
+sonda no `/chat/stream` e imprime a dica exata se o Gemini ainda não responder. Para voltar ao padrão (depois do caminho A), rode o
+deploy sem as variáveis.
+
+**Cloud Trace:** a Org Policy do projeto bloqueia `cloudtrace.googleapis.com` (`Request is disallowed by organization's Org Policy`), e os
+exportadores OTel devolviam `Failed to export … 400` a cada 6 s. Por isso `ZERA_OTEL_GCP` fica **0** por padrão neste projeto (logs JSON,
+`/metrics` e `zera.telemetria` continuam); com `=1`, cada mensagem de erro do exportador é registrada uma vez e as repetições são suprimidas.
+
 ## 2. Deploy
 
 ```bash
@@ -63,7 +101,7 @@ O que o deploy configura:
 | Modelo | `GOOGLE_GENAI_USE_VERTEXAI=1`, `GOOGLE_CLOUD_LOCATION=global`, `ZERA_MODEL=gemini-3.8-flash` (credencial = service account, sem chave) |
 | Dados/estado | `ZERA_FONTE=bigquery` (+ snapshot embarcado como fallback automático), `ZERA_ESTADO=bigquery` (cai para JSON se recusado), `ZERA_TELEMETRIA_BQ=1` |
 | Guardrails | `ZERA_STRICT_NUMEROS=1` (número fora das tools nunca chega à cliente), `ZERA_MODEL_ARMOR` opcional |
-| Observabilidade | `ZERA_OTEL_GCP=1` (traces + métricas do ADK e do motor → telemetry.googleapis.com), `ZERA_LOG_JSON=1` (Cloud Logging com trace id) |
+| Observabilidade | `ZERA_LOG_JSON=1` (Cloud Logging com request/trace id), `/metrics`, `zera.telemetria`; `ZERA_OTEL_GCP=0` por padrão neste projeto (Org Policy bloqueia o Cloud Trace — §1c); `=1` religa traces + métricas via telemetry.googleapis.com |
 | Segurança | container sem privilégio (uid 10001), `ZERA_DOCS=0`, sem segredos em env, SA `zera-run` com papéis mínimos: `aiplatform.user`, `bigquery.dataEditor`, `bigquery.jobUser`, `logging.logWriter`, `monitoring.metricWriter`, `cloudtrace.agent`, `telemetry.tracesWriter`, `telemetry.metricsWriter`, `modelarmor.user` |
 | Acesso | `--allow-unauthenticated` (demo pública para a banca); a UI é servida na mesma origem (sem CORS aberto necessário) |
 
@@ -99,6 +137,6 @@ Onde olhar: **Cloud Trace** (spans `invocation`, `agent_run`, `call_llm`, `execu
 |---|---|---|
 | `/ready` 503 | tabelas `zera.*` ausentes ou SA sem `bigquery.jobUser` | rode `publicar_bq`; ou redeploy com `ZERA_FONTE=amostra ZERA_ESTADO=json` |
 | chat devolve `erro` com "404 … model" | modelo não servido na location | `GOOGLE_CLOUD_LOCATION=global` (padrão) ou `ZERA_MODEL=gemini-2.5-flash` |
-| chat devolve `erro` 403 | SA sem `roles/aiplatform.user` | peça ao admin do projeto (o script tenta conceder) |
-| traces não aparecem | SA sem `telemetry.tracesWriter` | conceder o papel ou `ZERA_OTEL_GCP=0` |
+| chat devolve `erro` 403 | identidade de runtime sem `roles/aiplatform.user` | §1c: admin concede (1 comando) ou chave de API do Vertex (`ZERA_GEMINI_API_KEY_SECRET`) |
+| traces não aparecem | Org Policy bloqueia `cloudtrace.googleapis.com` neste projeto (ou SA sem `telemetry.tracesWriter`) | esperado no evento; `ZERA_OTEL_GCP=0` (padrão) |
 | conversa "esquece" ao recarregar | instância reiniciou (estado em JSON) | usar `ZERA_ESTADO=bigquery` (padrão com dados publicados) |

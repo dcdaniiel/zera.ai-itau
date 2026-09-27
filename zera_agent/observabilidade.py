@@ -96,6 +96,32 @@ def configurar_logs() -> None:
     raiz.setLevel(getattr(logging, os.getenv("ZERA_LOG_LEVEL", "INFO").upper(), logging.INFO))
     for barulhento in ("httpx", "httpcore", "google_genai", "google_adk", "urllib3", "uvicorn.access"):
         logging.getLogger(barulhento).setLevel(logging.WARNING)
+    # Exportadores OTel (telemetry.googleapis.com / Cloud Trace) tentam de novo a cada poucos segundos; quando a Org Policy do
+    # projeto bloqueia o serviço (caso do projeto do evento: cloudtrace.googleapis.com), cada tentativa viraria um ERROR no
+    # Cloud Logging. Deixamos passar a primeira ocorrência de cada mensagem e suprimimos as repetições.
+    for exportador in ("opentelemetry.exporter.otlp.proto.http.metric_exporter", "opentelemetry.exporter.otlp.proto.http.trace_exporter",
+                       "opentelemetry.exporter.otlp.proto.http._log_exporter", "opentelemetry.sdk.metrics._internal.export",
+                       "opentelemetry.sdk.trace.export"):
+        lg = logging.getLogger(exportador)
+        if not any(isinstance(f, _FiltroUmaVez) for f in lg.filters):
+            lg.addFilter(_FiltroUmaVez())
+
+
+class _FiltroUmaVez(logging.Filter):
+    """Deixa passar a primeira ocorrência de cada mensagem (com aviso de que as repetições serão suprimidas)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._vistas: set[str] = set()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        chave = record.getMessage()[:120]
+        if chave in self._vistas:
+            return False
+        self._vistas.add(chave)
+        record.msg = f"{record.getMessage()} (repetições desta mensagem suprimidas; ZERA_OTEL_GCP=0 desliga a exportação)"
+        record.args = ()
+        return True
 
 
 # ======================================================================

@@ -57,7 +57,7 @@ from pydantic import BaseModel  # noqa: E402
 
 from dados.loader import fonte_efetiva as fonte_dados, listar_clientes, perfil_clusters  # noqa: E402
 from motor import criar_acordo_de_cenario, montar_cenarios, resumo_cenario, situacao_hoje, termos  # noqa: E402
-from zera_agent.agent import MODEL, root_agent  # noqa: E402
+from zera_agent.agent import MODEL, autenticacao_llm, root_agent  # noqa: E402
 from zera_agent.contexto import Contexto  # noqa: E402
 from zera_agent.experiencia import PREFERENCIAS_PADRAO, Experiencia  # noqa: E402
 
@@ -271,7 +271,8 @@ def _sugestoes_chat(c: Contexto) -> list[str]:
 
 @app.get("/health")
 async def health():
-    return {"ok": True, "modelo": str(root_agent.model), "fonte": fonte_dados(), "estado": os.getenv("ZERA_ESTADO", "json"),
+    return {"ok": True, "modelo": str(getattr(root_agent.model, "model", root_agent.model)), "llm_auth": autenticacao_llm(),
+            "fonte": fonte_dados(), "estado": os.getenv("ZERA_ESTADO", "json"),
             "versao": app.version, "otel": OTEL, "location": os.getenv("GOOGLE_CLOUD_LOCATION")}
 
 
@@ -438,7 +439,11 @@ def _dica_operador(e: Exception) -> str:
     if "404" in msg and ("model" in msg.lower() or "publisher" in msg.lower()):
         return f"modelo {MODEL} não encontrado nesta location ({os.getenv('GOOGLE_CLOUD_LOCATION')}) — gemini-3.x é servido em `global`; `unset GOOGLE_CLOUD_LOCATION`"
     if "403" in msg or "PERMISSION_DENIED" in msg:
-        return "sem permissão no Vertex AI para esta conta/projeto (roles/aiplatform.user)"
+        conta = os.getenv("ZERA_RUNTIME_SA", "<conta de runtime do Cloud Run>")
+        projeto = os.getenv("GOOGLE_CLOUD_PROJECT", "batalha-time-03-vhxk")
+        return (f"identidade de runtime sem permissão no Vertex AI (roles/aiplatform.user). Admin do projeto: gcloud projects "
+                f"add-iam-policy-binding {projeto} --member=serviceAccount:{conta} --role=roles/aiplatform.user | sem admin: chave de API "
+                f"(ZERA_GEMINI_API_KEY_SECRET=… infra/deploy_app.sh — ver infra/producao.md §1c)")
     if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
         return "cota do modelo esgotada — tente de novo ou use ZERA_MODEL=gemini-2.5-flash"
     return msg[:200]
