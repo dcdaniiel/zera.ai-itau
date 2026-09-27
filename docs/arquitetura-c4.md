@@ -53,7 +53,8 @@ C4Container
     Container(ui, "App mobile (UI)", "React 19 · Vite 8 · Tailwind 4", "Perfis → onboarding → preferências → home (trigger) → experiência de 10 telas; renderiza por response_type; sem mock.")
     Container(api, "API", "FastAPI · Python 3.12 · uvicorn", "/v1/clientes · /perfil · /preferencias · /proativa · /experiencia(/evento) · /chat · /health /ready /metrics. Middleware: request id, latência, logs JSON.")
     Container(exp, "Orquestrador da experiência", "zera_agent/experiencia.py", "Máquina de estados + decision engine + roteamento determinístico de intenção + proatividade (7 pré-condições) + contrato estruturado.")
-    Container(agent, "Agente ADK", "google-adk 2.10 · LlmAgent · Gemini 3.8 Flash", "Explica e responde perguntas livres; 14 tools determinísticas; callbacks de guardrail; opcional multiagente (diagnóstico/negociador/acompanhamento).")
+    Container(agent, "Agente ADK", "google-adk 2.10 · LlmAgent · Gemini 3.8 Flash", "Entende a intenção, conduz e explica; 16 tools (motor + conhecimento); HITL nativo; callbacks de guardrail; opcional multiagente (diagnóstico/negociador/acompanhamento).")
+    Container(rag, "Base de conhecimento (RAG leve)", "conhecimento/ · busca lexical, sem vector store", "Política de renegociação, FAQ e glossário; consultar_conhecimento devolve até 3 trechos como evidência (nunca números); texto com cara de instrução é filtrado.")
     Container(motor, "Núcleo determinístico", "motor/ · Python puro", "capacidade · priorização · cenários (entrada + consolidação 12–60x) · hoje×nova · benefícios/claims · termos/CET · acordo · respiro · amortização · gatilhos.")
     Container(ctx, "Contexto do cliente", "zera_agent/contexto.py", "Perfil + capacidade em memória; estado (acordo, consentimentos, gatilhos, preferências, compromissos, renda informada); relógio de simulação.")
     Container(obsv, "Observabilidade & FinOps", "zera_agent/observabilidade.py", "OTel (ADK + spans próprios) → Telemetry API; logs JSON; métricas p50/p95; tokens/custo por chamada e jornada; lote para zera.telemetria.")
@@ -67,6 +68,7 @@ C4Container
   Rel(exp, motor, "situacao_hoje · montar_cenarios · validar_beneficios · termos · criar_acordo_de_cenario")
   Rel(exp, agent, "explicador(pergunta com FATOS, numeros_permitidos) — só EXPLAINING / ASK_QUESTION")
   Rel(agent, motor, "function tools")
+  Rel(agent, rag, "consultar_conhecimento")
   Rel(agent, vertex, "generate_content · Model Armor sanitize")
   Rel(exp, ctx, "lê/grava estado")
   Rel(ctx, dados, "carregar_perfil (1 query) · estado/eventos append-only")
@@ -119,16 +121,18 @@ C4Component
     Component(exp, "experiencia.py", "Experiencia", "Estados IDLE→…→COMPLETED | NO_SUITABLE_OPTION | ERROR; 19 ações; roteamento de intenção (regex pt-BR sem acento) antes do LLM; proatividade com 7 checks; contrato {state, response_type, content, options, quick_replies, allowed_actions, requires_confirmation, context, finops}.")
     Component(ctx, "contexto.py", "Contexto", "Perfil (loader), capacidade, estado (JSON | BigQuery append-only), compromissos e renda informados, roteiro do relógio (13º em dez/26, IRPF em mai/27), gatilhos.")
     Component(agent, "agent.py", "LlmAgent", "root 'zera' (Gemini 3.8 Flash, temperatura 0,2) · ZERA_MULTIAGENTE=1: sub-agentes diagnóstico/negociador/acompanhamento.")
-    Component(tools, "tools.py", "16 function tools", "get_perfil_financeiro · informar_renda · informar_gasto_fixo (dados insuficientes: sem renda no histórico as tools de cálculo recusam e a cliente informa) · calcular_capacidade · priorizar_dividas · montar_cenarios · simular_planos · comparar_com_padrao · registrar_consentimento · revogar_consentimento · fechar_acordo · status_acordo · acionar_respiro · amortizar · listar_gatilhos · escalar_humano. HITL nativo: fechar_acordo, acionar_respiro e amortizar(aplicar) são FunctionTool(require_confirmation) — o ADK pausa e só executa com a confirmação humana (canal hitl_app registrado no consentimento).")
+    Component(tools, "tools.py", "16 function tools", "get_perfil_financeiro · informar_renda · informar_gasto_fixo (dados insuficientes: sem renda no histórico as tools de cálculo recusam e a cliente informa) · calcular_capacidade · priorizar_dividas · montar_cenarios · comparar_com_padrao · registrar_consentimento · revogar_consentimento · fechar_acordo · status_acordo · acionar_respiro · amortizar · listar_gatilhos · escalar_humano · consultar_conhecimento (RAG leve). HITL nativo: fechar_acordo, acionar_respiro e amortizar(aplicar) são FunctionTool(require_confirmation) — o ADK pausa e só executa com a confirmação humana (canal hitl_app registrado no consentimento).")
     Component(gr, "guardrails.py", "4 callbacks", "before_model: Model Armor + injeção/jailbreak, engenharia social, fora de escopo (resposta fixa, modelo não chamado), PII redigida, vulnerabilidade, contexto. before_tool: exigir_consentimento (recusa humana → tool não roda, bloqueios_consentimento++). after_tool: números permitidos. after_model: pressão, promessa, vazamento, PII, números fora das tools → [valor a confirmar].")
     Component(obsv, "observabilidade.py", "medir · registrar_metrica · registrar_llm · resumo", "OTel via ADK (telemetry.googleapis.com) ou OTLP genérico; logs JSON com trace id; histogramas p50/p95; custo por chamada/jornada; lote para zera.telemetria.")
     Component(pr, "prompts.py", "instruções", "Regras invioláveis: números só das tools; parcela ≤ máxima; confirmação explícita; sem cobrança; escalar em vulnerabilidade.")
+    Component(kb, "conhecimento/ (RAG leve)", "busca.py + base/*.md", "Política de renegociação, FAQ, glossário; busca lexical top-3, chunks por parágrafo; trechos com cara de instrução removidos; nunca fonte de números.")
   }
   Rel(exp, ctx, "estado")
   Rel(exp, agent, "explicador(prompt com FATOS do estado)")
   Rel(agent, tools, "function calling")
   Rel(agent, gr, "callbacks")
   Rel(tools, ctx, "perfil, capacidade, acordo")
+  Rel(tools, kb, "consultar_conhecimento")
   Rel(exp, obsv, "spans/métricas por etapa")
 ```
 
@@ -229,7 +233,7 @@ flowchart LR
     T4[montar_cenarios] --- T5[simular_planos] --- T6[comparar_com_padrao]
     T7[registrar_consentimento] --- T8[[fechar_acordo ✋]] --- T9[status_acordo]
     T10[[acionar_respiro ✋]] --- T11[[amortizar aplicar ✋]] --- T12[listar_gatilhos]
-    T13[escalar_humano] --- T14[revogar_consentimento]
+    T13[escalar_humano] --- T14[revogar_consentimento] --- T15[consultar_conhecimento<br/>RAG leve: conhecimento/]
   end
   A --> tools
   T8 & T10 & T11 -->|require_confirmation → evento adk_request_confirmation<br/>invocação pausa| H

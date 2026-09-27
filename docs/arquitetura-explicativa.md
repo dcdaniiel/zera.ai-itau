@@ -19,7 +19,8 @@ o banco não abre mão do saldo devedor — muda taxa e prazo — e a cliente ga
 ```
 cliente (app) ──► UI React ──► API FastAPI ──┬─► Orquestrador da experiência guiada (0 tokens)  ──┐
                                              ├─► Agente ADK (Gemini 3.8 Flash) ── tools ─────────┼─► Motor determinístico ─► Contexto/Estado
-                                             │        ▲ guardrails: entrada · tool · saída        │            ▲
+                                             │        ▲ guardrails: entrada · tool · saída        ├─► RAG leve (conhecimento/: política, FAQ, glossário)
+                                             │                                                    │            ▲
                                              └─► Rotas determinísticas (/chat/inicio, /chat/contratar, saudações)            │
                                                                                                     dados/loader ◄─── BigQuery zera.* (k-means) | snapshot | amostra real
 observabilidade (backend): OTel → Cloud Trace / Monitoring · logs JSON → Cloud Logging · zera.telemetria / zera.eventos (BigQuery)
@@ -47,7 +48,7 @@ observabilidade (backend): OTel → Cloud Trace / Monitoring · logs JSON → Cl
 (Gemini 3.8 Flash no endpoint `global`, Model Armor), **Cloud Observability** (Trace/Monitoring/Logging) e os **sistemas transacionais** do banco
 (contratação/débito automático — simulados no MVP, marcados como tal).
 
-**Containers (nível 2).** Um único serviço no **Cloud Run** (`zera`, `us-central1`) contém sete containers lógicos:
+**Containers (nível 2).** Um único serviço no **Cloud Run** (`zera`, `us-central1`) contém oito containers lógicos:
 
 | Container | Tecnologia | Responsabilidade |
 |---|---|---|
@@ -56,6 +57,7 @@ observabilidade (backend): OTel → Cloud Trace / Monitoring · logs JSON → Cl
 | **Orquestrador da experiência** | `zera_agent/experiencia.py` | Máquina de estados, proatividade (7 pré-condições), contrato de resposta estruturado, roteamento de intenção sem LLM |
 | **Agente ADK** | google-adk 2.10 · `LlmAgent` · Gemini 3.8 Flash | Entende intenção, conduz a conversa, explica; 16 *function tools*; HITL nativo; 4 callbacks de guardrail |
 | **Motor determinístico** | `motor/` · Python puro | Capacidade, priorização, cenários por prazo, hoje × nova opção, benefícios validados, termos/CET, acordo, respiro, amortização, gatilhos |
+| **Base de conhecimento (RAG leve)** | `conhecimento/` · busca lexical (sem vector store) | Política de renegociação, FAQ e glossário; `consultar_conhecimento` devolve até 3 trechos como evidência para explicar termos e regras — nunca números |
 | **Contexto e estado** | `zera_agent/contexto.py` | Perfil + capacidade em memória; estado (acordos, consentimentos, gatilhos, renda/gastos informados) em BigQuery com fallback JSON; relógio da demo |
 | **Observabilidade & FinOps** | `zera_agent/observabilidade.py` | OTel (spans do ADK + spans próprios) → Telemetry API; logs JSON; métricas p50/p95; tokens/custo por chamada e por jornada |
 
@@ -216,7 +218,7 @@ texto digitado na tela guiada) e nenhum selo de guardrail, custo ou métrica apa
 | **Cloud Trace / Monitoring / Logging (Telemetry API)** | Traces e métricas OTel; logs JSON; métricas de log; alerta 5xx | `ZERA_OTEL_GCP=1`, `ZERA_LOG_JSON=1`, `infra/observabilidade.sh` | Observabilidade como código, só no backend |
 | **Cloud Billing Budgets** | Orçamento com alertas 50/90/100% | `infra/observabilidade.sh` | FinOps (item 25) |
 | **Cloud Shell / gcloud / bq** | Operação: publicar dados, exportar amostra e snapshot, deploy, smoke test | `infra/deploy_app.sh`, `infra/smoke_prod.sh`, `infra/conceder_dataset.py` | Runbook em `infra/producao.md` |
-| **P1 (desenhado, não ligado)** | Agent Engine Sessions/Memory Bank; scheduled query (Data Transfer) + Pub/Sub para gatilhos diários; Data Policy/DLP para mascaramento; Dataform para versionar o SQL; Gen AI Evaluation para o golden set | — | Ver §9 |
+| **P1 (desenhado, não ligado)** | Agent Engine Sessions/Memory Bank; scheduled query (Data Transfer) + Pub/Sub para gatilhos diários; Data Policy/DLP para mascaramento; Dataform para versionar o SQL; Gen AI Evaluation para o golden set | — | Ver §11 |
 
 **Sistemas transacionais do banco** (contratação, débito automático, boleto) são simulados no MVP e marcados como tal na interface; o ponto de
 integração é `fechar_por_cenario`/`criar_acordo_de_cenario` — o acordo já nasce com componente por dívida, termos e CET.
@@ -278,7 +280,61 @@ eventos NDJSON (`etapa`, `tool_call`, `tool_result`, `card`, `texto`, `fim`) ren
 
 ---
 
-## 8. Segurança, privacidade e IA responsável
+## 8. Decisões de dados e algoritmos
+
+Tudo o que a cliente vê como número nasce de um dado real e de uma fórmula testada; o modelo de linguagem não participa de nenhum passo desta seção.
+
+**Pipeline (versionado em `dados/sql/`, espelhado em pandas para o modo local):**
+
+```
+hackathon_dados.extrato_sintetico (base do evento, 12 meses por cliente)
+  → zera.extrato          partição por dia, cluster por id_usuario; classe da transação por regras (renda, dívida, parcela, essencial, assinatura, outros)
+  → features_mensais → perfil_cliente   12 meses em arrays; renda = média das entradas (tipo E); CV da renda; meses no vermelho
+  → features_cliente → kmeans_perfis    k-means++ no BigQuery ML, k = 4, features padronizadas → ML.PREDICT → clusters_clientes
+  → perfil_clusters       índice de endividamento = média de z-scores → cluster-alvo
+  → perfis_demo + dividas_derivadas     clientes reais do cluster-alvo; medoide = persona "Cleide"; dívidas rotuladas "estimado do extrato"
+  → motor/                capacidade → prioridades → cenários → gatilhos (em memória, < 10 ms, 0 tokens)
+  → estado_cliente · eventos · telemetria   append-only → funil, cumprimento D+90, custo por jornada
+```
+
+**Fórmulas (todas em `motor/`, cobertas por `tests/test_motor.py`):**
+
+| Etapa | Fórmula |
+|---|---|
+| Renda e sobra | `renda = média(entradas tipo E, 12 meses)` · `sobra[m] = renda[m] − essenciais[m] − compromissos[m]` |
+| Capacidade | `parcela_máx = 0,75 × max(0, P25(sobra) − 0,05 × renda_mediana)` · `conforto = 0,70 × parcela_máx` se `CV(renda) ≥ 0,12` · respiros = 2 |
+| Cenário por prazo | `parcela(n) = Price(saldo_consolidado, 1,8% a.m., n)`, `n ∈ {12, 18, 24, 36, 48, 60}` |
+| Viabilidade | `parcela + mantidas ≤ parcela_máx` **e** `#{m : sobra[m] − colchão < parcela} ≤ respiros` |
+| Ambos ganham | `custo_total = entrada + n × parcela = saldo_original + juros_acordo` · `ganho_banco = juros_acordo` |
+| Hoje | `pagamento = Σ(parcela ou juros)` · `juros/mês = Σ saldo_i × taxa_i` · `projeção(n) = Σ Price(saldo_i, taxa_i, n) × n` (comparação like-for-like) |
+| Nada cabe | `parcela_disp = min(parcela_máx, (respiros+1)-ésima menor sobra líquida) − mantidas` · `entrada_nec = saldo − PV(parcela_disp, 1,8%, 60)` |
+| Prioridade | `custo_mensal = saldo × taxa + peso(consequência: negativação)` |
+| Segmento | `índice_endividamento = média dos z-scores (vermelho, pior saldo, serviço de dívida, parcelas, rotativo, empréstimo)` |
+| Gasto invisível | `essenciais < 30% da renda` **ou** `sobra > 55% da renda` → perguntar gasto fixo, com os números |
+| Gatilhos | `entrada_rotativo` (cartão rotativo ou cheque especial com juros) > `pre_negativacao` (≥ 45 dias) > `risco_parcela` (D-3, sobra prevista < parcela) > `dinheiro_extra` (≥ 40% da renda mediana ou 13º/IRPF/FGTS/PLR) |
+
+**Decisões e justificativas:**
+
+| # | Decisão | Alternativa descartada | Por quê | Como se verifica |
+|---|---|---|---|---|
+| A1 | **Fonte única: base do evento**; fixtures só em testes; dívidas inferidas rotuladas | Persona sintética carregada pela API | A jornada precisa provar-se nos casos reais: renda ausente, nada cabe, mais de um acordo | Rótulo de fonte na UI e no `/health`; `tests/test_dados.py` sobre a amostra real |
+| A2 | **Renda = média mensal das entradas** (tipo E, 12 meses); ausente → perguntar | Imputar pela mediana do cluster; salário fixo da persona | Fonte explicável para a cliente; imputar decidiria por ela | `renda_fonte` exibida; testes do fluxo de renda no chat e na experiência |
+| A3 | **Classificação de transações por regras versionadas** (SQL e pandas espelhados) | Classificador ML de descrição | Auditável, sem treino, idêntico nos modos BigQuery e amostra | `segmentacao.py` reproduz `zera_tabelas.sql` |
+| A4 | **Features proporcionais + sinais** (essenciais/saídas, serviço de dívida/saídas, parcelas, meses no vermelho, pior saldo, rotativo, empréstimo, CV da renda) | Valores absolutos | Robustas quando a renda não aparece no extrato; comparáveis entre clientes | Padronização antes do k-means |
+| A5 | **k-means++ no BigQuery ML**, k = 4, features padronizadas | DBSCAN / hierárquico; só regras | Roda onde os dados estão, 1 job sobre 1 linha por cliente, reprodutível (`CREATE OR REPLACE MODEL`) | `ML.EVALUATE` (Davies-Bouldin) e estabilidade dos centróides — pendência declarada antes de afirmar "4 segmentos" |
+| A6 | **Cluster-alvo por índice de endividamento** (média de z-scores) e **persona = medoide** (menor distância ao centróide), pseudônimos determinísticos | Escolha manual; persona inventada | Regra explícita e auditável; "Cleide" é o cliente real mais típico do segmento, com identidade fictícia | `perfil_clusters`; `perfis_demo` ordenado por renda conhecida e distância |
+| A7 | **Dívidas derivadas do extrato por regras** (saldo < 0 → cheque especial; k/N → crediário; descrição → cartão/empréstimo) | Cadastro de contratos (inexistente no evento) | O extrato é o que existe; o rótulo "estimado do extrato" evita passar estimativa por fato | Integração com o cadastro real na evolução |
+| A8 | **Capacidade pelo P25 da sobra**, colchão 5%, fator 0,75, conforto 70% com renda irregular, 2 respiros | Média da sobra; % fixo da renda | Conservador (cabe em 3 de 4 meses); o colchão absorve variação; o fator evita apertar | Sensibilidade: +R$ 80/mês muda a recomendação para 60x; +R$ 300 → nenhuma opção |
+| A9 | **Priorização por custo mensal + consequência** | Avalanche puro (taxa) / snowball (saldo) | O que dói por mês e o risco de negativação pesam mais que a taxa nominal; dívidas a 0% explicadas como "sem juros" | `tests/test_motor.py` |
+| A10 | **Um cenário por prazo** (12–60x), Price a 1,8% a.m. sobre o saldo integral; rótulos recomendado (menor prazo com conforto) / mais barato / mais folga / guardar extra; entrada quita as mais caras primeiro; `parcela_alvo` marca as que atendem | Desconto no saldo; parcela contínua otimizada | "Ambos ganham": o banco mantém o saldo e recebe os juros do acordo; prazos discretos são o catálogo real | Total = saldo + juros confere com Price; `tests/test_motor.py` |
+| A11 | **Nada cabe → diagnóstico numérico** (parcela disponível, entrada necessária) e caminhos | Mensagem genérica | A cliente sai com número e opção (entrada, gasto a rever, humano) | Cenário "nenhuma opção" nos testes de fluxo |
+| A12 | **Hoje × nova opção like-for-like** no mesmo prazo; claims só quando o número comprova | "Total mágico" da dívida de hoje | Sem prazo não existe total; comparar no mesmo prazo é honesto; trade-offs incluem o que o banco recebe | `beneficios.validar_beneficios` |
+| A13 | **Gatilhos em ordem de urgência** | Só o rotativo | Consequência e prazo definem quem fala primeiro | `tests/test_experiencia.py`; scheduled query diária (Data Transfer + Pub/Sub) na evolução |
+| A14 | **Guardrail numérico**: todo número do texto do modelo ∈ (tools da sessão ∪ ditos pela cliente ∪ gatilho), com tolerância; caduca quando o estado muda | Confiar no modelo | Fecha o ciclo "o LLM nunca calcula" | `tests/test_guardrails_ataques.py` |
+| A15 | **RAG leve**: busca lexical top-3 sobre política, FAQ e glossário, chunks por parágrafo, sanitização de instruções embutidas | Embeddings + vector store; Vertex AI Search | Três arquivos curtos: zero infraestrutura, milissegundos, auditável; nunca fonte de números | `tests/test_conhecimento.py` |
+| A16 | **Premissas de crédito fictícias e documentadas** (`politicas.py`: percentil, colchão, fator, taxa, prazos, limiares) | Valores embutidos no código | A área de Crédito define catálogo e flexibilidade; trocar a política não muda o motor | Um único arquivo de alavancas; testes de sensibilidade |
+
+## 9. Segurança, privacidade e IA responsável
 
 - **Consentimento** explícito e registrado (`canal`, frase, timestamp); preferências de proatividade e Open Finance; `revogar_consentimento` e `POST /reset` (LGPD, estado append-only com `apagado=true`).
 - **Contexto mínimo:** agregados de 12 meses no prompt, nunca o extrato bruto; PII redigida na entrada e na saída; identidades fictícias (pseudônimos determinísticos).
@@ -286,14 +342,14 @@ eventos NDJSON (`etapa`, `tool_call`, `tool_result`, `card`, `texto`, `fim`) ren
 - **Runtime:** container sem privilégio (uid 10001), 1 worker, timeouts, `ZERA_DOCS=0`, sem segredos em variáveis (credencial = identidade do serviço).
 - **Tom:** sem cobrança, sem pressão, sem julgamento; vulnerabilidade → humano; "nenhuma opção" com diagnóstico e caminhos.
 
-## 9. Qualidade e operação
+## 10. Qualidade e operação
 
 - **94 testes sem rede** (`tests/`): motor (fórmulas e sensibilidade), fluxo ponta a ponta, agente com HITL (`FakeLlm`), API de chat (renda, botão Contratar, roteamento), guardrails (ataques), dados (amostra real, snapshot), conhecimento. Rodam no Mac (`uv run pytest -q`) e no CI local do time.
 - **Idempotência:** SQL `CREATE OR REPLACE`/`IF NOT EXISTS`; segundo `CONFIRM` não duplica acordo; redeploy mantém a URL (versão = hash do commit).
 - **Runbook** (`infra/producao.md`): deploy, smoke test, observabilidade, rollback (`update-traffic`), falhas conhecidas e o que fazer.
 - **Ambiente:** 12-factor por variáveis (`zera_agent/env.demo`), mesmo código local/produção; `ZERA_FONTE`, `ZERA_ESTADO`, `ZERA_OTEL_GCP` trocam integrações sem alterar código.
 
-## 10. Limitações conhecidas e evolução
+## 11. Limitações conhecidas e evolução
 
 | Item | Hoje | Próximo passo |
 |---|---|---|
@@ -306,7 +362,7 @@ eventos NDJSON (`etapa`, `tool_call`, `tool_result`, `card`, `texto`, `fim`) ren
 | Base de conhecimento | busca por palavra-chave | Vertex AI Search (RAG) sobre política e FAQ |
 | Mascaramento | PII por regex + pseudônimos | BigQuery Data Policy / DLP nas colunas de descrição |
 
-## 11. Rastreabilidade (onde está cada coisa)
+## 12. Rastreabilidade (onde está cada coisa)
 
 | Tema | Arquivos |
 |---|---|
