@@ -39,14 +39,14 @@ gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregi
 # (<número>-compute@developer.gserviceaccount.com), que já tem os papéis necessários — o deploy segue sem parar.
 SA_NAME="${SA_NAME:-zera-run}"
 SA="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
-SA_FLAGS=()
+SA_FLAG=""   # bash 3.2 do macOS + set -u: string simples em vez de array vazio
 if gcloud iam service-accounts describe "$SA" >/dev/null 2>&1 || gcloud iam service-accounts create "$SA_NAME" --display-name "zera.ai Cloud Run" >/dev/null 2>&1; then
   for ROLE in roles/aiplatform.user roles/bigquery.dataEditor roles/bigquery.jobUser roles/logging.logWriter roles/monitoring.metricWriter \
               roles/cloudtrace.agent roles/telemetry.tracesWriter roles/telemetry.metricsWriter roles/modelarmor.user; do
     gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA" --role="$ROLE" --quiet >/dev/null 2>&1 \
       || echo "(sem permissão para dar $ROLE — peça ao admin se algo falhar em runtime)"
   done
-  SA_FLAGS=(--service-account "$SA")
+  SA_FLAG="--service-account=$SA"
   echo ">> service account: $SA"
 else
   echo "!! sem permissão para criar a service account $SA_NAME — usando a identidade padrão do Cloud Run (conta compute do projeto)"
@@ -57,7 +57,7 @@ echo ">> Build + deploy ($SERVICE em $REGION, versão $VERSAO, fonte=$FONTE, est
 # Escala horizontal é P1 (VertexAiSessionService + estado só no BigQuery). Concurrency 40 cobre a banca com folga.
 ENV_VARS="GOOGLE_GENAI_USE_VERTEXAI=1,GOOGLE_GENAI_USE_ENTERPRISE=1,GOOGLE_CLOUD_PROJECT=$PROJECT,GOOGLE_CLOUD_LOCATION=$LOCATION,ZERA_MODEL=$MODEL,ZERA_FONTE=$FONTE,ZERA_ESTADO=$ESTADO,ZERA_STRICT_NUMEROS=1,ZERA_HOJE=2026-09-26,ZERA_VERSAO=$VERSAO,ZERA_OTEL_GCP=$OTEL,ZERA_TELEMETRIA_BQ=$TELEMETRIA_BQ,ZERA_LOG_JSON=1,ZERA_LOG_LEVEL=INFO,ZERA_MODEL_ARMOR=${ZERA_MODEL_ARMOR:-0},ZERA_DOCS=0"
 gcloud run deploy "$SERVICE" \
-  --source . --region "$REGION" --allow-unauthenticated "${SA_FLAGS[@]}" \
+  --source . --region "$REGION" --allow-unauthenticated $SA_FLAG \
   --min-instances 1 --max-instances 1 --concurrency 40 --memory 1Gi --cpu 1 --timeout 300 --cpu-boost \
   --labels "app=zera,versao=$VERSAO" \
   --set-env-vars "$ENV_VARS"
