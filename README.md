@@ -28,8 +28,8 @@ renda, a zera.ai **pergunta** antes de calcular (dados insuficientes) — nunca 
 
 ```bash
 pip install -r requirements.txt            # ou: uv sync
-cp zera_agent/env.demo zera_agent/.env     # ZERA_FONTE=amostra (roda sem credenciais) | bigquery (após publicar_bq)
-unset GOOGLE_CLOUD_LOCATION                # o ADK NÃO sobrescreve variáveis já exportadas no shell; gemini-3.x é servido em "global"
+cp zera_agent/env.demo zera_agent/.env     # lido automaticamente (adk web, uvicorn, pytest); ZERA_FONTE=amostra roda sem credenciais | bigquery (após publicar_bq)
+unset GOOGLE_CLOUD_LOCATION                # variável exportada no shell tem precedência sobre o .env (e o app avisa); gemini-3.x é servido em "global"
 gcloud auth application-default login      # para o Gemini responder "por que essa opção?" e as perguntas livres
 uv run pytest -q                           # 60 testes, sem rede (ou: pytest -q com o venv ativo)
 uv run uvicorn api.main:app --reload --port 8080   # API (+ serve ui/dist se existir)

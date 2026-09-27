@@ -94,6 +94,6 @@ export type EventoChat =
   | { tipo: 'llm'; tokens_entrada: number; tokens_saida: number; custo_usd: number }
   | { tipo: 'hitl'; hitl: Hitl }
   | { tipo: 'guardrail'; guardrail: { camada: string; tipo: string; trecho?: string } }
-  | { tipo: 'erro'; erro: string; texto: string }
+  | { tipo: 'erro'; erro: string; texto: string; dica?: string }
   | { tipo: 'fim'; sugestoes: string[]; finops: { chamadas: number; tokens_entrada: number; tokens_saida: number; custo_usd: number }; estado: Record<string, unknown>; acordo: any | null }
 export type ChatInicio = { texto: string; sugestoes: string[]; protecoes: string[]; cliente: string; hoje_simulado: string; sessao_id: string }
