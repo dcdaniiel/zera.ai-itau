@@ -49,21 +49,29 @@ function Texto({ texto }: { texto: string }) {
 
 const ETAPAS = [
   { id: 'entender', label: 'Entender' }, { id: 'opcoes', label: 'Opções' }, { id: 'escolher', label: 'Escolher' },
-  { id: 'confirmar', label: 'Confirmar no app' }, { id: 'acompanhar', label: 'Acompanhar' },
+  { id: 'confirmar', label: 'Confirmar' }, { id: 'acompanhar', label: 'Acompanhar' },
 ] as const
 type Etapa = typeof ETAPAS[number]['id']
-/* Sequência do fluxo — só aparece depois que a cliente pede algo que a inicia; o passo humano (confirmar) fica evidente. */
+/* Sequência do fluxo — só aparece depois que a cliente pede algo que a inicia; o passo humano (confirmar) fica evidente.
+   Stepper: 5 colunas iguais, círculo numerado (✓ quando feito) ligado por linha, rótulo centralizado — nada quebra nem corta. */
 function Trilha({ etapa }: { etapa: Etapa }) {
   const i = ETAPAS.findIndex((e) => e.id === etapa)
   return (
-    <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-[#FBF6F1]/95 backdrop-blur">
-      <ol className="flex items-center gap-1 text-[10px] font-semibold">
-        {ETAPAS.map((e, j) => (
-          <li key={e.id} className="flex items-center gap-1">
-            <span className={`rounded-full px-2 py-1 ${j < i ? 'bg-ok-soft text-ok' : j === i ? (e.id === 'confirmar' ? 'bg-itau-orange text-white' : 'bg-itau-orange-soft text-itau-orange') : 'bg-mist text-ink-soft'}`}>{j < i ? '✓ ' : ''}{e.label}</span>
-            {j < ETAPAS.length - 1 && <span className="text-ink-soft/50">›</span>}
-          </li>
-        ))}
+    <div className="sticky top-0 z-10 -mx-4 px-4 pt-2 pb-2 bg-[#FBF6F1]/95 backdrop-blur border-b border-line/70">
+      <ol className="grid grid-cols-5" aria-label="Etapas da conversa">
+        {ETAPAS.map((e, j) => {
+          const st = j < i ? 'feita' : j === i ? 'atual' : 'futura'
+          return (
+            <li key={e.id} aria-current={st === 'atual' ? 'step' : undefined} className="relative flex flex-col items-center gap-1 text-center">
+              {j > 0 && <span aria-hidden className={`absolute top-[11px] left-[-50%] w-full h-[2px] ${j <= i ? 'bg-ok' : 'bg-line'}`} />}
+              <span className={`relative z-[1] h-[22px] w-[22px] rounded-full grid place-items-center text-[10px] font-bold ${st === 'feita' ? 'bg-ok text-white' : st === 'atual' ? 'bg-itau-orange text-white ring-4 ring-itau-orange-soft' : 'bg-white border border-line text-ink-soft'}`}>
+                {st === 'feita' ? <Check className="h-3 w-3" strokeWidth={3} /> : j + 1}
+              </span>
+              <span className={`text-[10px] leading-[1.15] font-semibold ${st === 'atual' ? 'text-itau-orange' : st === 'feita' ? 'text-ok' : 'text-ink-soft'}`}>
+                {e.label}{e.id === 'confirmar' && <><br /><span className="font-medium opacity-80">no app</span></>}
+              </span>
+            </li>)
+        })}
       </ol>
     </div>
   )
@@ -236,10 +244,10 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
 
   return (
     <div className="h-full flex flex-col bg-[#FBF6F1] relative">
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
-        <button onClick={onSair} aria-label="Fechar" className="h-10 w-10 -ml-2 grid place-items-center rounded-full active:bg-black/5"><X /></button>
-        <span className="flex items-center gap-2 text-[15px] font-semibold text-ink-soft"><Faisca className="h-5 w-5" /> zera.ai · conversa</span>
-        <button onClick={onAbrirExperiencia} className="text-[12px] font-bold text-itau-orange">Ver na tela</button>
+      <div className="grid grid-cols-[76px_1fr_76px] items-center px-4 pt-3 pb-2">
+        <button onClick={onSair} aria-label="Fechar" className="h-10 w-10 -ml-2 grid place-items-center rounded-full active:bg-black/5 justify-self-start"><X className="h-5 w-5" /></button>
+        <span className="justify-self-center flex items-center gap-1.5 text-[15px] font-semibold text-ink whitespace-nowrap"><Faisca className="h-[18px] w-[18px]" /> zera.ai <span className="font-normal text-ink-soft">· conversa</span></span>
+        <button onClick={onAbrirExperiencia} className="justify-self-end h-10 px-1 text-[12px] font-bold text-itau-orange whitespace-nowrap">Ver na tela</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
         {etapa && <Trilha etapa={etapa} />}
