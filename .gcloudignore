@@ -1,0 +1,9 @@
+.git
+.venv
+.zera_state*
+.pytest_cache
+__pycache__
+**/__pycache__
+ui/node_modules
+ui/dist
+zera_agent/.env

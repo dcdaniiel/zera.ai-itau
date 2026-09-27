@@ -24,6 +24,7 @@ if str(RAIZ) not in sys.path:
 
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
 from google.adk.runners import Runner  # noqa: E402
 from google.adk.sessions import InMemorySessionService  # noqa: E402
 from google.genai import types  # noqa: E402
@@ -101,3 +102,9 @@ async def reset(cliente_id: str):
     Contexto.para(cliente_id).resetar()
     Contexto.limpar_cache()
     return {"ok": True}
+
+
+# ---------- UI (produção): a API serve o build do Vite em / (mesmo serviço no Cloud Run) ----------
+_UI_DIST = RAIZ / "ui" / "dist"
+if _UI_DIST.exists():
+    app.mount("/", StaticFiles(directory=str(_UI_DIST), html=True), name="ui")

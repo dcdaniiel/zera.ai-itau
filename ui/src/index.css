@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+/* Paleta Itaú (laranja institucional + azul) e neutros do app */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --color-itau-orange: #EC7000;
+  --color-itau-orange-dark: #C25400;
+  --color-itau-orange-soft: #FFF1E5;
+  --color-itau-orange-tint: #FFE1C7;
+  --color-itau-blue: #003399;
+  --color-itau-blue-soft: #E8EEFF;
+  --color-ink: #1B1B1F;
+  --color-ink-soft: #5F6368;
+  --color-mist: #F4F4F6;
+  --color-line: #E6E6EA;
+  --color-ok: #1E8E3E;
+  --color-ok-soft: #E6F4EA;
+  --color-warn: #B45309;
+  --color-warn-soft: #FEF3C7;
+  --color-danger: #C5221F;
+  --color-danger-soft: #FCE8E6;
+  --radius-card: 1.25rem;
+}
+
+html, body, #root { height: 100%; }
+body { @apply bg-[#DADCE0] text-ink font-sans antialiased; }
+
+/* utilitários do app */
+.glass { @apply bg-white/80 backdrop-blur-xl border border-white/60 shadow-[0_8px_30px_rgba(27,27,31,0.08)]; }
+.card { @apply bg-white rounded-[var(--radius-card)] border border-line shadow-[0_2px_12px_rgba(27,27,31,0.06)]; }
+.chip { @apply inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs font-semibold; }
+.btn-primary { @apply inline-flex items-center justify-center gap-2 rounded-full bg-itau-orange px-5 py-3 text-sm font-bold text-white shadow-[0_6px_16px_rgba(236,112,0,0.35)] active:scale-[0.98] transition disabled:opacity-50; }
+.btn-ghost { @apply inline-flex items-center justify-center gap-2 rounded-full border border-line bg-white px-4 py-3 text-sm font-semibold text-ink active:scale-[0.98] transition; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+@keyframes rise { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
+.rise { animation: rise .28s ease-out both; }
+@keyframes blink { 0%, 80%, 100% { opacity: .25 } 40% { opacity: 1 } }
+.dot { animation: blink 1.2s infinite; }
+.dot:nth-child(2) { animation-delay: .2s } .dot:nth-child(3) { animation-delay: .4s }

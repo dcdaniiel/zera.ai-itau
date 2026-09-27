@@ -1,0 +1,7 @@
+google-adk>=2.0
+google-cloud-aiplatform[agent_engines]
+google-cloud-bigquery
+db-dtypes
+pandas
+fastapi
+uvicorn[standard]

@@ -30,6 +30,9 @@ from zera_agent import guardrails, prompts, tools  # noqa: E402
 # Troque pelo Flash mais novo habilitado no projeto (ver Model Garden / quota). Ex.: gemini-3-flash-preview
 MODEL = os.getenv("ZERA_MODEL", "gemini-3.8-flash")  # fallback estável: gemini-2.5-flash
 CONFIG = types.GenerateContentConfig(temperature=float(os.getenv("ZERA_TEMPERATURA", "0.2")))
+# Diagnóstico: o ADK NÃO sobrescreve variáveis já exportadas no shell (ex.: GOOGLE_CLOUD_LOCATION=us-central1 no .zshrc).
+# Se a location abaixo não for a do .env, rode `unset GOOGLE_CLOUD_LOCATION` antes do `adk web`.
+print(f"[zera] modelo={MODEL} location={os.getenv('GOOGLE_CLOUD_LOCATION')} projeto={os.getenv('GOOGLE_CLOUD_PROJECT')}", file=sys.stderr)
 
 # Arquitetura de guardrails do workshop RAI: entrada (bloqueia) -> modelo -> saída (bloqueia)
 CALLBACKS = dict(
