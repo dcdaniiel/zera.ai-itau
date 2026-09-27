@@ -2,6 +2,7 @@
 
 from .alocacao import coeficiente_variacao_renda, montar_cenarios, opcoes_da_divida
 from .capacidade import calcular_capacidade, percentil
+from .consolidacao import ROTULO_UI, resumo_cenario, situacao_hoje, termos
 from .gatilhos import detectar_gatilhos
 from .modelos import Acordo, Capacidade, Divida, PerfilFinanceiro, Plano
 from .politicas import POLITICA_PADRAO, carregar_politica
@@ -22,6 +23,7 @@ __all__ = [
     "POLITICA_PADRAO", "carregar_politica", "percentil",
     "calcular_capacidade", "priorizar_dividas", "simular_planos", "criar_acordo", "criar_acordo_de_cenario",
     "montar_cenarios", "opcoes_da_divida", "coeficiente_variacao_renda",
+    "situacao_hoje", "resumo_cenario", "termos", "ROTULO_UI",
     "registrar_pagamento", "acionar_respiro", "amortizar", "processar_vencimentos",
     "detectar_gatilhos", "numeros_de",
 ]

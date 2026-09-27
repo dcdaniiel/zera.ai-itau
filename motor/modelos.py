@@ -10,6 +10,12 @@ def r2(x: float) -> float:
     return round(float(x) + 1e-9, 2)
 
 
+def brl(x: float) -> str:
+    """Formata em reais no padrão pt-BR: 1234.5 -> 'R$ 1.234,50' (o guardrail de saída entende este formato)."""
+    inteiro, dec = f"{abs(float(x)):,.2f}".split(".")
+    return f"{'-' if x < 0 else ''}R$ {inteiro.replace(',', '.')},{dec}"
+
+
 @dataclass
 class Divida:
     divida_id: str
@@ -21,6 +27,7 @@ class Divida:
     parcelas_restantes: int = 0
     consequencia: str = "nenhuma"  # negativacao | corte_servico | garantia | nenhuma
     descricao: str = ""
+    instituicao: str = "Itaú"      # dívidas de outras instituições entram via Open Finance
 
     @property
     def custo_mensal(self) -> float:

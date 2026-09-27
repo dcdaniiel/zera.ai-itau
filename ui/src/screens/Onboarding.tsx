@@ -54,7 +54,7 @@ const ITENS = [
 ]
 
 export function Preferencias({ onSalvar, onVoltar }: { onSalvar: (prefs: Record<string, boolean>) => void; onVoltar: () => void }) {
-  const [prefs, setPrefs] = useState<Record<string, boolean>>({ analisar: true, momentos: true, recomendar: true, avisar: true })
+  const [prefs, setPrefs] = useState<Record<string, boolean>>({ analisar: true, momentos: true, recomendar: true, avisar: true, open_finance: false })
   return (
     <div className="h-full bg-mist flex flex-col">
       <HeaderItau />
@@ -75,7 +75,7 @@ export function Preferencias({ onSalvar, onVoltar }: { onSalvar: (prefs: Record<
         <Card className="mt-3 flex items-center gap-3">
           <div className="h-12 w-12 shrink-0 rounded-2xl bg-itau-orange-soft text-itau-orange grid place-items-center"><Building2 className="h-5 w-5" /></div>
           <div className="flex-1"><div className="font-bold">Incluir outras instituições</div><div className="text-[13px] text-ink-soft leading-snug mt-0.5">Permite que a zera.ai considere seus dados de outras instituições financeiras pelo Open Finance.</div></div>
-          <ChevronRight className="h-5 w-5 text-ink-soft" />
+          <Toggle on={prefs.open_finance} onChange={(v) => setPrefs({ ...prefs, open_finance: v })} label="Incluir outras instituições" />
         </Card>
         <div className="mt-3 flex items-start gap-3 px-1">
           <div className="h-10 w-10 shrink-0 rounded-full bg-mist border border-line grid place-items-center"><Lock className="h-4 w-4 text-ink-soft" /></div>

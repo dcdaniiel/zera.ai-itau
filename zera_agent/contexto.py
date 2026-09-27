@@ -32,6 +32,8 @@ def pasta_estado() -> Path:
 
 # Roteiro da demo: eventos que o "avançar tempo" injeta (dinheiro extra etc.)
 ROTEIRO_DEMO: list[dict] = [
+    # a anomalia que abre a jornada: entrada extra no dia da demo (13º / renda extra)
+    {"a_partir_de": HOJE_INICIAL, "tipo": "credito", "valor": 2800.00, "descricao": "PIX RECEBIDO - RENDA EXTRA", "recorrente": False},
     {"a_partir_de": "2027-05-01", "tipo": "credito", "valor": 1400.00, "descricao": "RESTITUICAO IRPF", "recorrente": False},
 ]
 
@@ -124,6 +126,9 @@ class Contexto:
         self.perfil, self._df = carregar_perfil(cliente_id)
         self.capacidade = calcular_capacidade(self.perfil, self.politica)
         self.estado: dict[str, Any] = self.repo.ler(cliente_id) or self._estado_inicial()
+        self.estado.setdefault("compromissos_extras", [])
+        self._compromissos_base = list(self.perfil.compromissos_mensal)
+        self._aplicar_compromissos()
 
     @classmethod
     def para(cls, cliente_id: str) -> "Contexto":
@@ -136,17 +141,41 @@ class Contexto:
         cls._cache.clear()
 
     def _estado_inicial(self) -> dict:
+        hoje = date.fromisoformat(HOJE_INICIAL)
+        creditos = [{k: v for k, v in ev.items() if k != "a_partir_de"} for ev in ROTEIRO_DEMO
+                    if date.fromisoformat(ev["a_partir_de"]) <= hoje]
+        gatilhos = detectar_gatilhos(self.perfil, None, hoje, creditos_recentes=creditos, politica=self.politica)
         return {
             "hoje": HOJE_INICIAL,
             "acordo": None,
             "consentimentos": [],
-            "gatilhos_pendentes": [],
+            "gatilhos_pendentes": gatilhos,
             "eventos": [],
-            "creditos_recentes": [],
+            "creditos_recentes": creditos,
             "sobra_prevista_mes": None,
             "memoria": {"dia_pagamento_preferido": self.perfil.dia_pagamento_preferido, "canal": "app"},
             "escalonamentos": [],
+            "compromissos_extras": [],   # gastos importantes informados pelo cliente que não aparecem no extrato
         }
+
+    # --- compromissos informados pelo cliente (tela "Antes de calcular, preciso confirmar uma coisa") ---
+    def adicionar_compromisso(self, descricao: str, valor_mensal: float) -> dict:
+        item = {"descricao": descricao, "valor_mensal": round(float(valor_mensal), 2), "data": self.estado["hoje"]}
+        self.estado.setdefault("compromissos_extras", []).append(item)
+        self._aplicar_compromissos()
+        self.salvar()
+        self.registrar_evento("compromisso_informado", item)
+        return item
+
+    def _aplicar_compromissos(self) -> None:
+        """Compromissos extras entram em todos os meses e reduzem a sobra; a capacidade é recalculada."""
+        extra = round(sum(c["valor_mensal"] for c in self.estado.get("compromissos_extras", [])), 2)
+        base = getattr(self, "_compromissos_base", None)
+        if base is None:
+            self._compromissos_base = list(self.perfil.compromissos_mensal)
+            base = self._compromissos_base
+        self.perfil.compromissos_mensal = [round(b + extra, 2) for b in base]
+        self.capacidade = calcular_capacidade(self.perfil, self.politica)
 
     # --- propriedades ---
     @property
@@ -177,6 +206,7 @@ class Contexto:
     def resetar(self) -> None:
         self.repo.apagar(self.cliente_id)
         self.estado = self._estado_inicial()
+        self._aplicar_compromissos()
         self.salvar()
 
     # --- relógio de simulação ---

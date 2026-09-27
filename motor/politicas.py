@@ -31,6 +31,7 @@ POLITICA_PADRAO: dict = {
     "horizonte_manter_meses": 12,   # custo de "manter" uma dívida em dia = juros por 12 meses
     "cv_renda_irregular": 0.12,     # coeficiente de variação da renda a partir do qual o perfil é "renda irregular"
     "fator_conforto_renda_irregular": 0.70,  # parcela de conforto = 70% da parcela máxima para renda irregular
+    "desconto_debito_automatico_pct": 0.02,  # desconto na parcela com débito automático (fictício)
     "desconto_amortizacao": 0.15,   # cada R$ 1 amortizado abate R$ 1/(1-0,15)
     "reserva_meses_colchao": 3,     # reserva sugerida = min(3 colchões, 30% do extra)
     "reserva_pct_extra": 0.30,

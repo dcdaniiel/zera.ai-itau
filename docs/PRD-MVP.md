@@ -4,7 +4,7 @@
 |---|---|
 | **Agente** | Zera (nome assumido pelo repositório; troque se o time escolher outro) |
 | **Jornada** | Cliente já endividado/negativado: **dinheiro extra (FGTS, 13º, restituição, renda extra) → qual dívida quitar, qual renegociar em 12x/18x/24x/36x** — dentro da realidade financeira, para sair da negativação e cumprir até o fim |
-| **Versão** | 0.4 · dados 100% BigQuery (sem Firestore) · Gemini 3.8 Flash · 0.3 · 26/09/2026 · anomalia → quitar/renegociar por dívida (12–36x) · guardrails RAI entrada/saída · projeto GCP `batalha-time-03-vhxk` (us-central1) |
+| **Versão** | 0.5 · experiência guiada (spec v1: estados, contrato `response_type`, proatividade, claims validados, AT01–AT10) · UI de 10 telas · C4 em `docs/arquitetura-c4.md` · 0.4 · dados 100% BigQuery (sem Firestore) · Gemini 3.8 Flash · 0.3 · 26/09/2026 · anomalia → quitar/renegociar por dívida (12–36x) · guardrails RAI entrada/saída · projeto GCP `batalha-time-03-vhxk` (us-central1) |
 | **Escopo deste doc** | O mínimo que a demo de 5 min precisa provar + a solução de engenharia em GCP/Gemini para construir hoje |
 | **Restrição de plataforma** | Camada de agentes 100% GCP/Gemini (ADK + Vertex AI Agent Engine + Gemini). Nenhum LLM ou orquestrador de terceiros. |
 

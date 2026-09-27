@@ -45,13 +45,13 @@ ESSENCIAIS = [  # (dia, descricao, valor, categoria)
 DIVIDAS = [
     {"divida_id": "dv_cartao", "produto": "cartao_rotativo", "saldo": 3200.00, "taxa_mensal": 0.14,
      "dias_atraso": 60, "parcela_atual": 0.0, "parcelas_restantes": 0, "consequencia": "negativacao",
-     "descricao": "Cartão Itaú — 2 ciclos no rotativo"},
+     "descricao": "Cartão Itaú — 2 ciclos no rotativo", "instituicao": "Itaú"},
     {"divida_id": "dv_cheque", "produto": "cheque_especial", "saldo": 900.00, "taxa_mensal": 0.08,
      "dias_atraso": 0, "parcela_atual": 0.0, "parcelas_restantes": 0, "consequencia": "nenhuma",
-     "descricao": "Cheque especial em uso há 20 dias"},
+     "descricao": "Cheque especial em uso há 20 dias", "instituicao": "Itaú"},
     {"divida_id": "dv_emprestimo", "produto": "emprestimo", "saldo": 2700.00, "taxa_mensal": 0.045,
      "dias_atraso": 60, "parcela_atual": 380.00, "parcelas_restantes": 8, "consequencia": "negativacao",
-     "descricao": "Empréstimo pessoal — 2 parcelas de 380 atrasadas"},
+     "descricao": "Empréstimo pessoal — 2 parcelas de 380 atrasadas", "instituicao": "Outra instituição (Open Finance)"},
 ]
 
 

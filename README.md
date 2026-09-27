@@ -3,14 +3,14 @@
 Agente conversacional (ADK + Gemini no Vertex AI) para a **Batalha de Agentes Itaú × Google**.
 Parte do cliente já endividado/negativado: detecta a **anomalia de entrada** (FGTS, 13º, restituição, renda extra) e decide,
 dívida por dívida, o que **quitar à vista com desconto** e o que **renegociar em 12x/18x/24x/36x**, dentro da realidade financeira
-(sobra real, parcela de conforto, respiros), para sair da negativação e cumprir até o fim. PRD e arquitetura: [`docs/PRD-MVP.md`](docs/PRD-MVP.md).
+(sobra real, parcela de conforto, respiros), para sair da negativação e cumprir até o fim. PRD: [`docs/PRD-MVP.md`](docs/PRD-MVP.md) · Arquitetura C4: [`docs/arquitetura-c4.md`](docs/arquitetura-c4.md) · Dados: [`docs/estrategia-dados.md`](docs/estrategia-dados.md).
 
 ```
 motor/        cálculo determinístico: capacidade, priorização, alocação por dívida (quitar/renegociar/manter), Price, respiro, amortização, gatilhos
 dados/        extrato sintético da persona (Cleide), loader CSV/BigQuery, SQL de features e eventos
-zera_agent/   agente ADK: prompt, tools, guardrails (callbacks), contexto/relógio de simulação
+zera_agent/   experiencia.py (máquina de estados + contrato estruturado da spec), agente ADK, tools, guardrails, contexto
 api/          FastAPI: /chat, /simular_tempo, /gatilhos — e serve a UI buildada em produção
-ui/           app mobile (React + Vite + Tailwind, paleta Itaú): onboarding, preferências/consentimento, home com gatilho, chat com cards
+ui/           app mobile (React + Vite + Tailwind, paleta Itaú): onboarding, preferências, home com mensagem proativa e a experiência de 10 telas (renderiza por response_type)
 tests/        motor + fluxo do agente com modelo falso (roda sem credenciais)
 infra/        setup do projeto GCP e deploy (Agent Engine / Cloud Run)
 ```
@@ -22,7 +22,7 @@ uv sync                                  # ou: pip install -e .
 cp zera_agent/.env.example zera_agent/.env
 gcloud auth application-default login    # projeto batalha-time-03-vhxk
 python -m dados.gerar_cleide             # (re)gera dados/cleide_12m.csv
-uv run pytest -q                         # 36 testes, sem rede (motor, fluxo do agente, ataques aos guardrails)
+uv run pytest -q                         # 45 testes, sem rede (motor, agente, ataques aos guardrails, acceptance tests AT01–AT10)
 uv run adk web                           # UI de dev -> escolha "zera_agent"
 ```
 
@@ -40,9 +40,13 @@ API para a UI: `uv run uvicorn api.main:app --port 8080` (`POST /chat`, `POST /s
 cd ui && npm install && npm run dev      # http://localhost:5173 — /api vai para a API em :8080
 VITE_MOCK=1 npm run dev                  # modo demo/offline (roteiro com os números do motor, sem API)
 ```
-Telas: onboarding ("Conheça a zera.ai") → preferências/consentimento → home com o gatilho "Entrou R$ 2.800" → chat com cards
-(raio-X, capacidade, cenários, acordo), confirmação explícita e badge de guardrail. Botão azul (frasco) = controles da demo:
-avançar tempo, ataque ao guardrail, reiniciar, alternar API real/modo demo. Se a API cair, a UI cai sozinha para o modo demo.
+Fluxo (spec "Agent Behavior & Content Specification v1"): onboarding → preferências (`avisar` = permissão de proatividade) →
+home com `PROACTIVE_MESSAGE` (só se todas as pré-condições passarem) → **Entrada** (SUMMARY) → **Confirmação** (QUESTION: gasto fora
+do extrato) → **Processamento** (STATUS) → **Resultado** (OPTION_DETAIL: hoje × nova opção, claim validado, trade-off) →
+**Outras opções** (OPTIONS_COMPARISON: Mais equilibrada / Menor parcela / Terminar antes) → **Termos** (TERMS_REVIEW) →
+**Débito automático** (QUESTION + AUTOPAY_DISCOUNT) → **Confirme** (CONFIRMATION_REQUEST) → **Finalizando** (STATUS) → **Pronto!** (SUCCESS).
+"Por que essa opção?" e o input "Digite aqui" vão ao LLM atrás dos guardrails; tudo o mais é determinístico.
+Botão azul (frasco) = controles da demo: avançar tempo, ataque ao guardrail, reiniciar, alternar API real/modo demo.
 
 ## Deploy (um serviço no Cloud Run: API + agente + UI)
 
