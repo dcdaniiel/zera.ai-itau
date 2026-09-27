@@ -57,9 +57,55 @@ PADRAO_DIVIDA = re.compile(r"(?:JUROS|PARCELA|FATURA|EMPRESTIMO|EMPR[ÉE]STIMO|M
 CAMPOS_DIVIDA = set(Divida.__dataclass_fields__)
 
 
+SNAPSHOT = Path(__file__).parent / "snapshot_bq"
+_snapshot_ativo: dict | None = None      # meta do snapshot quando ele está sendo usado (fallback ou modo explícito)
+_snapshot_motivo = ""
+
+
 def fonte() -> str:
     f = os.getenv("ZERA_FONTE", "amostra")
     return "amostra" if f == "csv" else f
+
+
+def fonte_efetiva() -> str:
+    """O que a API mostra em /health e nos cards: 'bigquery', 'bigquery_snapshot (<hora>)', 'amostra' ou 'fixture'."""
+    if _snapshot_ativo:
+        return f"bigquery_snapshot ({_snapshot_ativo.get('gerado_em', '')})"
+    return fonte()
+
+
+def _snapshot_disponivel() -> bool:
+    return (SNAPSHOT / "meta.json").exists() and (SNAPSHOT / "perfis_demo.json").exists()
+
+
+def _ler_snapshot(nome: str):
+    return json.loads((SNAPSHOT / f"{nome}.json").read_text(encoding="utf-8"))
+
+
+def _usar_snapshot(motivo: str) -> None:
+    """Liga o snapshot (resultado do BigQuery ML exportado no deploy com a credencial de quem publicou)."""
+    global _snapshot_ativo, _snapshot_motivo
+    if _snapshot_ativo is None:
+        _snapshot_ativo = _ler_snapshot("meta")
+        _snapshot_motivo = motivo
+        log.warning("BigQuery em runtime indisponível (%s): usando snapshot exportado em %s (%d perfis do cluster-alvo)",
+                    motivo[:160], _snapshot_ativo.get("gerado_em"), _snapshot_ativo.get("perfis", 0))
+
+
+def _bq_ou_snapshot(consulta, do_snapshot):
+    """Executa a consulta no BigQuery; se o runtime não tiver permissão/credencial e houver snapshot, usa o snapshot."""
+    if fonte() == "bigquery_snapshot" or _snapshot_ativo:
+        if not _snapshot_disponivel():
+            raise RuntimeError("ZERA_FONTE=bigquery_snapshot sem dados/snapshot_bq — rode `python -m dados.exportar_snapshot_bq`")
+        _usar_snapshot("modo explícito" if fonte() == "bigquery_snapshot" else _snapshot_motivo)
+        return do_snapshot()
+    try:
+        return consulta()
+    except Exception as e:  # noqa: BLE001 — 403 (jobs.create), credencial ausente, dataset inexistente…
+        if _snapshot_disponivel():
+            _usar_snapshot(str(e))
+            return do_snapshot()
+        raise
 
 
 # ---------- normalização ----------
@@ -180,16 +226,23 @@ def listar_clientes() -> list[dict]:
     """Perfis disponíveis para a demo: clientes REAIS do segmento-alvo. bigquery: `perfis_demo` (k-means);
     amostra: segmentação por regras sobre o export; fixture: o perfil sintético de teste."""
     f = fonte()
-    if f == "bigquery":
+    if f in ("bigquery", "bigquery_snapshot"):
         z = f"{PROJETO}.{DATASET_ZERA}"
-        linhas = _query(f"""SELECT id_usuario, nome, medoide, cluster, distancia, renda_mediana, renda_media, meses_com_renda, renda_conhecida,
-                                   total_dividas, qtd_dividas, meses_no_vermelho, sinais, ordem
-                            FROM `{z}.perfis_demo` ORDER BY ordem""")
-        return [{"cliente_id": r["id_usuario"], "nome": r["nome"], "persona": False, "medoide": bool(r["medoide"]), "cluster": r["cluster"],
-                 "distancia": r["distancia"], "renda_mediana": r2(r["renda_mediana"] or 0), "renda_media": r2(r.get("renda_media") or 0),
-                 "meses_com_renda": int(r.get("meses_com_renda") or 0), "renda_conhecida": bool(r["renda_conhecida"]),
-                 "total_dividas": r2(r["total_dividas"] or 0), "qtd_dividas": int(r["qtd_dividas"] or 0), "meses_no_vermelho": r["meses_no_vermelho"],
-                 "sinais": r["sinais"], "fonte_dividas": "derivada_extrato", "fonte": "bigquery", "segmentacao": "k-means (BigQuery ML)"} for r in linhas]
+
+        def consulta():
+            linhas = _query(f"""SELECT id_usuario, nome, medoide, cluster, distancia, renda_mediana, renda_media, meses_com_renda, renda_conhecida,
+                                       total_dividas, qtd_dividas, meses_no_vermelho, sinais, ordem
+                                FROM `{z}.perfis_demo` ORDER BY ordem""")
+            return [{"cliente_id": r["id_usuario"], "nome": r["nome"], "persona": False, "medoide": bool(r["medoide"]), "cluster": r["cluster"],
+                     "distancia": r["distancia"], "renda_mediana": r2(r["renda_mediana"] or 0), "renda_media": r2(r.get("renda_media") or 0),
+                     "meses_com_renda": int(r.get("meses_com_renda") or 0), "renda_conhecida": bool(r["renda_conhecida"]),
+                     "total_dividas": r2(r["total_dividas"] or 0), "qtd_dividas": int(r["qtd_dividas"] or 0), "meses_no_vermelho": r["meses_no_vermelho"],
+                     "sinais": r["sinais"], "fonte_dividas": "derivada_extrato", "fonte": "bigquery", "segmentacao": "k-means (BigQuery ML)"} for r in linhas]
+
+        def do_snapshot():
+            return [{**p, "fonte": fonte_efetiva()} for p in _ler_snapshot("perfis_demo")]
+
+        return _bq_ou_snapshot(consulta, do_snapshot)
     if f == "fixture":
         meta = carregar_dividas_json()
         p, _ = carregar_perfil(meta["cliente_id"])
@@ -224,9 +277,10 @@ def listar_clientes() -> list[dict]:
 
 
 def perfil_clusters() -> list[dict]:
-    if fonte() != "bigquery":
+    if fonte() not in ("bigquery", "bigquery_snapshot"):
         return []
-    return _query(f"SELECT * FROM `{PROJETO}.{DATASET_ZERA}.perfil_clusters` ORDER BY cluster")
+    return _bq_ou_snapshot(lambda: _query(f"SELECT * FROM `{PROJETO}.{DATASET_ZERA}.perfil_clusters` ORDER BY cluster"),
+                           lambda: _ler_snapshot("perfil_clusters"))
 
 
 def derivar_dividas(df: pd.DataFrame, cliente_id: str) -> list[dict]:
@@ -300,8 +354,9 @@ def perfil_de_transacoes(cliente_id: str, nome: str, df: pd.DataFrame, dividas: 
 def carregar_perfil(cliente_id: str) -> tuple[PerfilFinanceiro, pd.DataFrame]:
     """Fonte por env ZERA_FONTE: bigquery (agregado; cai para o extrato bruto) | amostra (export real) | fixture (testes)."""
     f = fonte()
-    if f == "bigquery":
-        agregado = carregar_bigquery_agregado(cliente_id)
+    if f in ("bigquery", "bigquery_snapshot"):
+        agregado = _bq_ou_snapshot(lambda: carregar_bigquery_agregado(cliente_id),
+                                   lambda: _ler_snapshot("perfis").get(str(cliente_id)))
         if agregado:
             n = len(agregado["meses"])
             perfil = PerfilFinanceiro(
@@ -309,9 +364,11 @@ def carregar_perfil(cliente_id: str) -> tuple[PerfilFinanceiro, pd.DataFrame]:
                 renda_mensal=[r2(x) for x in agregado["renda_mensal"]],
                 essenciais_mensal=[r2(x) for x in agregado["essenciais_mensal"]],
                 compromissos_mensal=[0.0] * n, dividas=_dividas(agregado["dividas"]),
-                tem_reserva=False, dia_pagamento_preferido=10, persona=False, fonte="bigquery",
+                tem_reserva=False, dia_pagamento_preferido=10, persona=False, fonte=fonte_efetiva(),
             )
             return perfil, pd.DataFrame()
+        if _snapshot_ativo or f == "bigquery_snapshot":
+            raise LookupError(f"cliente {cliente_id} não está no snapshot do cluster-alvo")
         df = carregar_bigquery(cliente_id)
         dividas = derivar_dividas(df, cliente_id)
         return perfil_de_transacoes(cliente_id, f"Cliente {cliente_id[:4].upper()}", df, dividas, fonte="bigquery"), df

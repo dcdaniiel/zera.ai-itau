@@ -24,6 +24,14 @@ if [ "$FONTE" = "bigquery" ]; then
   if command -v bq >/dev/null 2>&1 && bq --project_id="$PROJECT" query --use_legacy_sql=false --format=csv \
        'SELECT COUNT(*) AS n FROM `'"$PROJECT"'.zera.perfis_demo`' 2>/dev/null | tail -1 | grep -Eq '^[1-9][0-9]*$'; then
     echo ">> dados ok: zera.perfis_demo publicado"
+    # A identidade de runtime do Cloud Run pode não ter bigquery.jobs.create (IAM travado no projeto do evento). Exporta agora,
+    # com a SUA credencial, o resultado do BigQuery ML (perfis_demo + perfil agregado + dívidas + clusters) para
+    # dados/snapshot_bq/ — vai dentro da imagem e a API usa automaticamente se o BigQuery recusar a consulta em runtime.
+    if ZERA_FONTE=bigquery GOOGLE_CLOUD_PROJECT="$PROJECT" ${PYTHON:-uv run python} -m dados.exportar_snapshot_bq; then
+      echo ">> snapshot do BigQuery embarcado (fallback automático se o runtime não tiver permissão)"
+    else
+      echo "!! não consegui exportar o snapshot — se o runtime não tiver permissão no BigQuery, /ready vai falhar; use ZERA_FONTE=amostra"
+    fi
   else
     echo "!! zera.perfis_demo não encontrado — rode 'python -m dados.publicar_bq' (precisa de ADC). Subindo com ZERA_FONTE=amostra (40 clientes reais, 12 meses) e estado em JSON."
     FONTE="amostra"; ESTADO="json"; TELEMETRIA_BQ=0

@@ -12,3 +12,5 @@ zera_agent/requirements.txt
 ui/node_modules/
 ui/dist/
 ui/.env
+# gerado no deploy (dados/exportar_snapshot_bq.py); sobe para o Cloud Build via .gcloudignore
+dados/snapshot_bq/

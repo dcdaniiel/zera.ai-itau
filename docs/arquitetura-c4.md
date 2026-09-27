@@ -134,7 +134,7 @@ C4Component
 
 | Componente | Responsabilidade |
 |---|---|
-| `loader.py` | `ZERA_FONTE=bigquery` → `perfil_cliente` + `dividas_derivadas` + `perfis_demo` + `clusters_clientes` (1 query); fallback extrato bruto. `amostra` → export real (`amostra_bq_extrato_sintetico.csv`, gerado por `sql/exportar_amostra.sql`) + `segmentacao.py`. `fixture` → só testes. Renda = média mensal das entradas do histórico (`renda_media`, `meses_com_renda`, `renda_fonte`); sem entradas → `renda_desconhecida` → a experiência/agente perguntam. |
+| `loader.py` | `ZERA_FONTE=bigquery` → `perfil_cliente` + `dividas_derivadas` + `perfis_demo` + `clusters_clientes` (1 query); se o runtime não puder consultar (IAM), cai para o snapshot exportado no deploy (`dados/exportar_snapshot_bq.py`, fonte rotulada `bigquery_snapshot`); fallback extrato bruto. `amostra` → export real (`amostra_bq_extrato_sintetico.csv`, gerado por `sql/exportar_amostra.sql`) + `segmentacao.py`. `fixture` → só testes. Renda = média mensal das entradas do histórico (`renda_media`, `meses_com_renda`, `renda_fonte`); sem entradas → `renda_desconhecida` → a experiência/agente perguntam. |
 | `segmentacao.py` | Mesmas features do SQL em pandas; índice de endividamento; pseudônimos determinísticos (medoide = "Cleide"). |
 | `sql/zera_tabelas.sql` | extrato (partição/cluster) → features_mensais → perfil_cliente → dividas_derivadas → estado/eventos/telemetria. |
 | `sql/clusterizacao.sql` | features_cliente → `CREATE MODEL kmeans_perfis` (k-means++, features padronizadas) → `ML.PREDICT` → perfil_clusters (índice) → perfis_demo. |

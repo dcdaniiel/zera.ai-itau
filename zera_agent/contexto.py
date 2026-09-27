@@ -6,6 +6,7 @@ O agente nunca toca o extrato bruto: ele só vê o que as tools devolvem a parti
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import asdict
 from datetime import date
@@ -23,6 +24,7 @@ from motor import (
 )
 from motor.modelos import Divida, PerfilFinanceiro
 
+log = logging.getLogger("zera.contexto")
 RAIZ = Path(__file__).resolve().parent.parent
 HOJE_INICIAL = os.getenv("ZERA_HOJE", "2026-09-26")
 
@@ -109,8 +111,49 @@ def _agora() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class RepositorioResiliente:
+    """BigQuery primeiro; se o runtime não tiver permissão (403 em jobs/insert) ou credencial, cai para JSON local e avisa
+    uma vez — a conversa nunca quebra por causa do repositório de estado."""
+
+    def __init__(self, primario, reserva):
+        self.primario, self.reserva, self.caiu = primario, reserva, False
+
+    def _tentar(self, nome, *args):
+        if not self.caiu:
+            try:
+                return getattr(self.primario, nome)(*args)
+            except Exception as e:  # noqa: BLE001
+                self.caiu = True
+                log.warning("estado no BigQuery indisponível em runtime (%s): usando JSON local (%s)", str(e)[:160], self.reserva.pasta)
+        return getattr(self.reserva, nome)(*args)
+
+    def ler(self, cliente_id):
+        return self._tentar("ler", cliente_id)
+
+    def gravar(self, cliente_id, estado):
+        return self._tentar("gravar", cliente_id, estado)
+
+    def apagar(self, cliente_id):
+        return self._tentar("apagar", cliente_id)
+
+    def gravar_evento(self, cliente_id, tipo, payload, data_simulada):
+        if self.caiu:
+            return None
+        try:
+            return self.primario.gravar_evento(cliente_id, tipo, payload, data_simulada)
+        except Exception as e:  # noqa: BLE001
+            self.caiu = True
+            log.warning("eventos no BigQuery indisponíveis (%s): estado segue em JSON local", str(e)[:160])
+            return None
+
+
 def repositorio():
-    return RepositorioBigQuery() if os.getenv("ZERA_ESTADO", "json") == "bigquery" else RepositorioJson()
+    if os.getenv("ZERA_ESTADO", "json") == "bigquery":
+        try:
+            return RepositorioResiliente(RepositorioBigQuery(), RepositorioJson())
+        except Exception as e:  # noqa: BLE001 — sem biblioteca/credencial: JSON
+            log.warning("RepositorioBigQuery indisponível (%s): usando JSON", str(e)[:160])
+    return RepositorioJson()
 
 
 # ---------- contexto ----------

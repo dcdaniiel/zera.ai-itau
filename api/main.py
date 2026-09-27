@@ -55,7 +55,7 @@ from google.adk.sessions import InMemorySessionService  # noqa: E402
 from google.genai import types  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from dados.loader import fonte as fonte_dados, listar_clientes, perfil_clusters  # noqa: E402
+from dados.loader import fonte_efetiva as fonte_dados, listar_clientes, perfil_clusters  # noqa: E402
 from motor import criar_acordo_de_cenario, montar_cenarios, resumo_cenario, situacao_hoje, termos  # noqa: E402
 from zera_agent.agent import MODEL, root_agent  # noqa: E402
 from zera_agent.contexto import Contexto  # noqa: E402

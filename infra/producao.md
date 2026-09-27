@@ -25,6 +25,20 @@ Verificação: `bq query --use_legacy_sql=false 'SELECT nome, renda_media, meses
 Se algum SQL falhar: me mande a mensagem (o SQL foi validado por parser, nunca executado antes). **O deploy não depende disso**:
 sem `zera.perfis_demo` o script sobe com `ZERA_FONTE=amostra` (40 clientes reais, 12 meses, embarcados na imagem) e estado em JSON.
 
+## 1b. Permissões no projeto do evento (o que descobrimos)
+
+A conta pessoal tem BigQuery, Cloud Build, Cloud Run e Artifact Registry (leitura) — mas **não** pode criar service account,
+repositório no Artifact Registry nem alterar IAM. A identidade de runtime do Cloud Run (`27813124245-compute@…`) **não tem**
+`bigquery.jobs.create`. O deploy contorna tudo isso sem intervenção de admin:
+
+- service account: usa a identidade padrão do Cloud Run;
+- repositório de imagens: reaproveita o que já existe no Artifact Registry (`--image`);
+- dados: exporta, com a sua credencial, o resultado do BigQuery ML para `dados/snapshot_bq/` (embarcado na imagem); em runtime a API
+  tenta o BigQuery e, ao receber 403, usa o snapshot automaticamente — a fonte aparece como `bigquery_snapshot (<hora da exportação>)`;
+- estado: `ZERA_ESTADO=bigquery` cai para JSON local se a gravação for recusada (1 instância, então consistente).
+
+Se um admin conceder `roles/bigquery.jobUser` + `roles/bigquery.dataEditor` à conta compute, tudo passa a ser ao vivo sem redeploy.
+
 ## 2. Deploy
 
 ```bash
@@ -40,7 +54,7 @@ O que o deploy configura:
 |---|---|
 | Instâncias | min 1 / **max 1** (sessões do ADK e cache em processo; sem split-brain), concurrency 40, 1 vCPU / 1 GiB, cpu-boost, timeout 300 s |
 | Modelo | `GOOGLE_GENAI_USE_VERTEXAI=1`, `GOOGLE_CLOUD_LOCATION=global`, `ZERA_MODEL=gemini-3.8-flash` (credencial = service account, sem chave) |
-| Dados/estado | `ZERA_FONTE=bigquery`, `ZERA_ESTADO=bigquery`, `ZERA_TELEMETRIA_BQ=1` (ou amostra/json/0 no fallback) |
+| Dados/estado | `ZERA_FONTE=bigquery` (+ snapshot embarcado como fallback automático), `ZERA_ESTADO=bigquery` (cai para JSON se recusado), `ZERA_TELEMETRIA_BQ=1` |
 | Guardrails | `ZERA_STRICT_NUMEROS=1` (número fora das tools nunca chega à cliente), `ZERA_MODEL_ARMOR` opcional |
 | Observabilidade | `ZERA_OTEL_GCP=1` (traces + métricas do ADK e do motor → telemetry.googleapis.com), `ZERA_LOG_JSON=1` (Cloud Logging com trace id) |
 | Segurança | container sem privilégio (uid 10001), `ZERA_DOCS=0`, sem segredos em env, SA `zera-run` com papéis mínimos: `aiplatform.user`, `bigquery.dataEditor`, `bigquery.jobUser`, `logging.logWriter`, `monitoring.metricWriter`, `cloudtrace.agent`, `telemetry.tracesWriter`, `telemetry.metricsWriter`, `modelarmor.user` |

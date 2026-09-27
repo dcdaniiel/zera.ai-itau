@@ -107,3 +107,38 @@ def test_fixture_so_para_testes():
     assert p.persona is True and p.fonte == "fixture"
     with pytest.raises(LookupError):
         loader.carregar_perfil("outro")
+
+
+def test_snapshot_do_bigquery_cobre_runtime_sem_permissao(monkeypatch, tmp_path):
+    """Produção: a identidade do Cloud Run pode não ter bigquery.jobs.create. O deploy exporta o resultado do BigQuery ML
+    (perfis_demo + agregados + clusters) e a API cai para o snapshot quando a consulta é recusada — rotulando a fonte."""
+    import json
+
+    monkeypatch.setenv("ZERA_FONTE", "bigquery")
+    monkeypatch.setenv("ZERA_ESTADO_DIR", str(tmp_path))
+    snap = tmp_path / "snapshot_bq"; snap.mkdir()
+    perfis = [{"cliente_id": "real-1", "nome": "Cleide", "persona": False, "medoide": True, "cluster": 2, "distancia": 0.3, "renda_mediana": 4000.0,
+               "renda_media": 4100.0, "meses_com_renda": 12, "renda_conhecida": True, "total_dividas": 9000.0, "qtd_dividas": 2, "meses_no_vermelho": 10,
+               "sinais": "10 meses no vermelho", "fonte_dividas": "derivada_extrato", "fonte": "bigquery", "segmentacao": "k-means (BigQuery ML)"}]
+    agregado = {"meses": [f"2025-{m:02d}" for m in range(1, 13)], "renda_mensal": [4100.0] * 12, "essenciais_mensal": [2000.0] * 12,
+                "parcelas_mensal": [0.0] * 12, "renda_conhecida": True, "nome": "Cleide", "medoide": True, "segmento": {"cluster": 2, "distancia": 0.3},
+                "dividas": [{"divida_id": "d1", "produto": "cheque_especial", "saldo": 9000.0, "taxa_mensal": 0.08, "dias_atraso": 0, "parcela_atual": 0.0,
+                             "parcelas_restantes": 0, "consequencia": "nenhuma", "descricao": "cheque especial", "instituicao": "Itaú", "fonte": "derivada_extrato"}]}
+    (snap / "perfis_demo.json").write_text(json.dumps(perfis)); (snap / "perfis.json").write_text(json.dumps({"real-1": agregado}))
+    (snap / "perfil_clusters.json").write_text(json.dumps([{"cluster": 2, "cluster_alvo": True}]))
+    (snap / "meta.json").write_text(json.dumps({"gerado_em": "2026-09-27T04:00:00+00:00", "perfis": 1}))
+    monkeypatch.setattr(loader, "SNAPSHOT", snap)
+    monkeypatch.setattr(loader, "_snapshot_ativo", None)
+
+    def recusa(sql, **params):
+        raise PermissionError("403 POST https://bigquery.googleapis.com/.../jobs: Access Denied: Project batalha-time-03-vhxk")
+    monkeypatch.setattr(loader, "_query", recusa)
+
+    lista = loader.listar_clientes()
+    assert lista[0]["nome"] == "Cleide" and lista[0]["fonte"].startswith("bigquery_snapshot (2026-09-27")
+    p, _ = loader.carregar_perfil("real-1")
+    assert p.renda_media == 4100.0 and p.dividas[0].produto == "cheque_especial" and p.fonte.startswith("bigquery_snapshot")
+    assert loader.perfil_clusters()[0]["cluster_alvo"] is True and loader.fonte_efetiva().startswith("bigquery_snapshot")
+    with pytest.raises(LookupError):
+        loader.carregar_perfil("nao-existe")
+    monkeypatch.setattr(loader, "_snapshot_ativo", None)
