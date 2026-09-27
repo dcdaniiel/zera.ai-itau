@@ -55,9 +55,30 @@ fi
 echo ">> Build + deploy ($SERVICE em $REGION, versão $VERSAO, fonte=$FONTE, estado=$ESTADO, otel=$OTEL)"
 # 1 instância (min=max): sessões do ADK e cache de contexto vivem em processo — sem split-brain entre réplicas na demo.
 # Escala horizontal é P1 (VertexAiSessionService + estado só no BigQuery). Concurrency 40 cobre a banca com folga.
+# Repositório de imagens: `--source` cria "cloud-run-source-deploy" no Artifact Registry, o que exige
+# artifactregistry.repositories.create — negado no projeto do evento. Reaproveita qualquer repositório Docker já existente
+# (em qualquer região) via --image; se não houver nenhum, imprime o comando de 1 linha para quem tem permissão (owner/organização).
+IMAGE_FLAG=""
+if [ -n "${AR_REPO:-}" ]; then
+  IMAGE_FLAG="--image=${AR_REPO}/${SERVICE}"           # ex.: AR_REPO=us-central1-docker.pkg.dev/proj/repo
+else
+  REPO_FULL=$(gcloud artifacts repositories list --project "$PROJECT" --filter='format=DOCKER' --format='value(name)' 2>/dev/null | head -1 || true)
+  if [ -n "$REPO_FULL" ]; then
+    REPO_LOC=$(echo "$REPO_FULL" | awk -F/ '{print $4}'); REPO_NAME=$(echo "$REPO_FULL" | awk -F/ '{print $6}')
+    IMAGE_FLAG="--image=${REPO_LOC}-docker.pkg.dev/${PROJECT}/${REPO_NAME}/${SERVICE}"
+    echo ">> repositório de imagens existente: ${REPO_LOC}-docker.pkg.dev/${PROJECT}/${REPO_NAME}"
+  else
+    echo "!! nenhum repositório Docker no Artifact Registry e sua conta não pode criar um. Peça a quem tem permissão (owner do projeto /"
+    echo "   organização do evento) para rodar UMA vez:"
+    echo "   gcloud artifacts repositories create cloud-run-source-deploy --repository-format=docker --location=$REGION --project=$PROJECT"
+    echo "   Depois rode ./infra/deploy_app.sh de novo (ou AR_REPO=<loc>-docker.pkg.dev/$PROJECT/<repo> ./infra/deploy_app.sh)."
+    exit 1
+  fi
+fi
+
 ENV_VARS="GOOGLE_GENAI_USE_VERTEXAI=1,GOOGLE_GENAI_USE_ENTERPRISE=1,GOOGLE_CLOUD_PROJECT=$PROJECT,GOOGLE_CLOUD_LOCATION=$LOCATION,ZERA_MODEL=$MODEL,ZERA_FONTE=$FONTE,ZERA_ESTADO=$ESTADO,ZERA_STRICT_NUMEROS=1,ZERA_HOJE=2026-09-26,ZERA_VERSAO=$VERSAO,ZERA_OTEL_GCP=$OTEL,ZERA_TELEMETRIA_BQ=$TELEMETRIA_BQ,ZERA_LOG_JSON=1,ZERA_LOG_LEVEL=INFO,ZERA_MODEL_ARMOR=${ZERA_MODEL_ARMOR:-0},ZERA_DOCS=0"
 gcloud run deploy "$SERVICE" \
-  --source . --region "$REGION" --allow-unauthenticated $SA_FLAG \
+  --source . $IMAGE_FLAG --region "$REGION" --allow-unauthenticated $SA_FLAG \
   --min-instances 1 --max-instances 1 --concurrency 40 --memory 1Gi --cpu 1 --timeout 300 --cpu-boost \
   --labels "app=zera,versao=$VERSAO" \
   --set-env-vars "$ENV_VARS"
