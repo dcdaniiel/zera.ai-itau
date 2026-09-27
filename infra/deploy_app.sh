@@ -62,9 +62,26 @@ IMAGE_FLAG=""
 if [ -n "${AR_REPO:-}" ]; then
   IMAGE_FLAG="--image=${AR_REPO}/${SERVICE}"           # ex.: AR_REPO=us-central1-docker.pkg.dev/proj/repo
 else
-  REPO_FULL=$(gcloud artifacts repositories list --project "$PROJECT" --filter='format=DOCKER' --format='value(name)' 2>/dev/null | head -1 || true)
-  if [ -n "$REPO_FULL" ]; then
-    REPO_LOC=$(echo "$REPO_FULL" | awk -F/ '{print $4}'); REPO_NAME=$(echo "$REPO_FULL" | awk -F/ '{print $6}')
+  # lista em JSON e escolhe um repositório DOCKER (de preferência na mesma região); o campo name pode vir curto ou completo
+  REPO_JSON=$(gcloud artifacts repositories list --project "$PROJECT" --format=json 2>/dev/null || echo "[]")
+  REPO_PICK=$(REGION="$REGION" python3 -c '
+import json, os, sys
+repos = json.loads(sys.stdin.read() or "[]")
+cands = []
+for r in repos:
+    if str(r.get("format", "DOCKER")).upper() != "DOCKER":
+        continue
+    parts = str(r.get("name", "")).split("/")
+    loc = parts[3] if len(parts) >= 6 else str(r.get("location", ""))
+    repo = parts[5] if len(parts) >= 6 else parts[-1]
+    if loc and repo:
+        cands.append((0 if loc == os.environ["REGION"] else 1, loc, repo))
+if cands:
+    _, loc, repo = sorted(cands)[0]
+    print(loc, repo)
+' <<< "$REPO_JSON" 2>/dev/null || true)
+  if [ -n "$REPO_PICK" ]; then
+    REPO_LOC=${REPO_PICK%% *}; REPO_NAME=${REPO_PICK##* }
     IMAGE_FLAG="--image=${REPO_LOC}-docker.pkg.dev/${PROJECT}/${REPO_NAME}/${SERVICE}"
     echo ">> repositório de imagens existente: ${REPO_LOC}-docker.pkg.dev/${PROJECT}/${REPO_NAME}"
   else
