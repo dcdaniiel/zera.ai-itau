@@ -99,5 +99,5 @@ export type EventoChat =
   | { tipo: 'erro'; erro: string; texto: string; dica?: string }
   | { tipo: 'fim'; sugestoes: string[]; finops: { chamadas: number; tokens_entrada: number; tokens_saida: number; custo_usd: number }; estado: Record<string, unknown>; acordo: any | null }
 /* Opções acionáveis extraídas pelo backend da enumeração final de cada resposta ("1) … 2) …"): viram botões no chat. */
-export type OpcaoChat = { id: string; rotulo: string; acao: 'enviar' | 'humano' | 'pausar' | 'contratar'; cenario?: string }
+export type OpcaoChat = { id: string; rotulo: string; acao: 'enviar' | 'humano' | 'pausar' | 'contratar' | 'tela'; cenario?: string }
 export type ChatInicio = { texto: string; sugestoes: string[]; protecoes: string[]; cliente: string; hoje_simulado: string; sessao_id: string }

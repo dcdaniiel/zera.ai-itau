@@ -239,6 +239,8 @@ def _acao_opcao(rotulo: str) -> dict:
         return {"acao": "contratar", "cenario": f"C{m.group(1)}"}
     if re.search(r"\b(pessoa|atendente|humano|alguem do time)\b", r):
         return {"acao": "humano"}
+    if re.search(r"na tela|debito automatico|tela guiada", r):
+        return {"acao": "tela"}   # abre a experiência guiada (débito automático, termos, acompanhamento)
     if re.search(r"nao (fazer|mexer)|agora nao|depois|por enquanto|nada agora|deixar (como|pra|para)", r):
         return {"acao": "pausar"}
     return {"acao": "enviar"}
@@ -264,6 +266,53 @@ def _evento_texto(texto: str, **extra) -> dict:
     if opcoes:
         ev["opcoes"] = opcoes
     return ev
+
+
+async def _registrar_turno(s, texto_cliente: str | None, texto_zera: str | None, state_delta: dict | None = None) -> None:
+    """Tudo o que acontece fora do modelo (resposta roteada, botão Contratar, opção digitada) entra no histórico da sessão do ADK
+    e guarda `ultimas_opcoes`. Assim o próximo turno do Gemini vê a conversa inteira (ex.: o acordo já fechado pelo botão) e um
+    "1"/"2" digitado é resolvido contra as opções que a cliente acabou de ver — sem modelo."""
+    delta = dict(state_delta or {})
+    if texto_zera is not None:
+        delta["ultimas_opcoes"] = _extrair_opcoes(texto_zera)[1]
+    if texto_cliente:
+        await sessoes.append_event(s, Event(author="user", invocation_id=f"rt-{uuid4().hex[:8]}",
+                                            content=types.Content(role="user", parts=[types.Part(text=texto_cliente)])))
+    await sessoes.append_event(s, Event(author=root_agent.name, invocation_id=f"rt-{uuid4().hex[:8]}",
+                                        content=types.Content(role="model", parts=[types.Part(text=texto_zera)]) if texto_zera else None,
+                                        actions=EventActions(state_delta=delta)))
+
+
+RE_NUMERO_OPCAO = re.compile(r"^\W*(?:op[cç][aã]o\s*)?([1-9])\W*$")
+
+
+def _opcao_digitada(s, texto: str) -> dict | None:
+    """"1", "2)", "opção 3" -> a opção correspondente da última lista mostrada (ou None)."""
+    m = RE_NUMERO_OPCAO.match(texto or "")
+    if not m:
+        return None
+    return next((o for o in (s.state.get("ultimas_opcoes") or []) if str(o.get("id")) == m.group(1)), None)
+
+
+def _texto_tela(nome: str) -> str:
+    voc = f", {nome}" if nome and nome.lower() != "cliente" else ""
+    return (f"Isso é feito na tela guiada{voc}: toque em **Ver na tela**, no topo, para ativar o débito automático, rever os termos "
+            "e acompanhar o acordo. Nada muda sem você confirmar lá.\n\n1) Ver como fica meu acordo\n2) Falar com uma pessoa")
+
+
+async def _abrir_hitl_botao(s, cliente_id: str, sessao_id: str, cenario_id: str) -> dict | None:
+    """Card de confirmação (HITL) para um cenário guardado na sessão — o mesmo do botão Contratar. None se o cenário não existe."""
+    cen = (s.state.get("cenarios") or {}).get((cenario_id or "").strip().upper())
+    if not cen or not cen.get("viavel", True):
+        return None
+    request_id = f"btn_{uuid4().hex[:10]}"
+    hitl = _hitl_com_sessao(_enriquecer_hitl(cliente_id, sessao_id, {"request_id": request_id, "tool": "fechar_acordo", "args": {"plano_id": cen["id"]}, "hint": "botão do app"}),
+                            dict(s.state), cliente_id)
+    hitl["canal"] = "botao"
+    await sessoes.append_event(s, Event(author="user", invocation_id=f"btn-{request_id}",
+                                        actions=EventActions(state_delta={"hitl_botao": {**(s.state.get("hitl_botao") or {}), request_id: cen["id"]}})))
+    obs.registrar_metrica("zera.hitl_pedido", 1, {"tool": "fechar_acordo", "canal": "botao"})
+    return hitl
 
 
 def _roteamento_deterministico(c: Contexto, texto: str) -> str | None:
@@ -374,7 +423,7 @@ async def _resposta_chat(cliente_id: str, sessao_id: str, resultado: dict, ja_vi
     s = await sessoes.get_session(app_name=APP_NAME, user_id=cliente_id, session_id=sessao_id)
     estado = dict(s.state) if s else {}
     ui = estado.get("ui", [])
-    hitl = _hitl_com_sessao(resultado["hitl"], estado, cliente_id) if resultado.get("hitl") else None
+    hitl = resultado["hitl"] if resultado.get("hitl_pronto") else (_hitl_com_sessao(resultado["hitl"], estado, cliente_id) if resultado.get("hitl") else None)
     bloqueios = estado.get("bloqueios_guardrail") or []
     c = _ctx(cliente_id)
     cabeca, opcoes = _extrair_opcoes(resultado["texto"] or "")
@@ -391,11 +440,27 @@ async def chat(body: ChatIn):
     s = await _sessao(body.cliente_id, body.sessao_id)
     ja_vistos = len(s.state.get("ui", []))
     bloqueios_antes = len(s.state.get("bloqueios_guardrail") or [])
-    fixo = _roteamento_deterministico(_ctx(body.cliente_id), body.mensagem)
+    mensagem = body.mensagem
+    op = _opcao_digitada(s, mensagem)
+    if op:
+        if op["acao"] == "contratar":
+            hitl = await _abrir_hitl_botao(s, body.cliente_id, body.sessao_id, op.get("cenario", ""))
+            if hitl:
+                await _registrar_turno(s, f"[Escolhi a opção {op['id']}: {op['rotulo']}]", None)
+                return await _resposta_chat(body.cliente_id, body.sessao_id, {"texto": "", "hitl": hitl, "hitl_pronto": True}, ja_vistos, bloqueios_antes)
+        elif op["acao"] == "tela":
+            txt = _texto_tela((_ctx(body.cliente_id).perfil.nome or "").split(" ")[0])
+            await _registrar_turno(s, f"[Escolhi a opção {op['id']}: {op['rotulo']}]", txt)
+            return await _resposta_chat(body.cliente_id, body.sessao_id, {"texto": txt, "hitl": None}, ja_vistos, bloqueios_antes)
+        mensagem = op["rotulo"]
+    fixo = _roteamento_deterministico(_ctx(body.cliente_id), mensagem)
     if fixo:
         obs.registrar_metrica("zera.chat_roteado", 1, {"tipo": "saudacao"})
+        await _registrar_turno(s, mensagem, fixo)
         return await _resposta_chat(body.cliente_id, body.sessao_id, {"texto": fixo, "hitl": None}, ja_vistos, bloqueios_antes)
-    resultado = await _rodar_agente(body.cliente_id, body.sessao_id, body.mensagem, "chat")
+    resultado = await _rodar_agente(body.cliente_id, body.sessao_id, mensagem, "chat")
+    if resultado.get("texto"):
+        await _registrar_turno(s, None, None, {"ultimas_opcoes": _extrair_opcoes(resultado["texto"])[1]})
     return await _resposta_chat(body.cliente_id, body.sessao_id, resultado, ja_vistos, bloqueios_antes)
 
 
@@ -416,13 +481,7 @@ async def chat_contratar(body: ContratarIn):
         raise HTTPException(404, "cenário não está nesta conversa — peça as opções de novo")
     if not cen.get("viavel", True):
         raise HTTPException(409, "esse cenário não cabe no mês da cliente")
-    request_id = f"btn_{uuid4().hex[:10]}"
-    hitl = _hitl_com_sessao(_enriquecer_hitl(body.cliente_id, body.sessao_id, {"request_id": request_id, "tool": "fechar_acordo", "args": {"plano_id": cen["id"]}, "hint": "botão do app"}),
-                            dict(s.state), body.cliente_id)
-    hitl["canal"] = "botao"
-    await sessoes.append_event(s, Event(author="user", invocation_id=f"btn-{request_id}",
-                                        actions=EventActions(state_delta={"hitl_botao": {**(s.state.get("hitl_botao") or {}), request_id: cen["id"]}})))
-    obs.registrar_metrica("zera.hitl_pedido", 1, {"tool": "fechar_acordo", "canal": "botao"})
+    hitl = await _abrir_hitl_botao(s, body.cliente_id, body.sessao_id, cen["id"])
     return {"hitl": hitl, "etapa": "confirmar"}
 
 
@@ -437,8 +496,10 @@ async def _stream_contratacao_botao(cliente_id: str, sessao_id: str, request_id:
     cen = (s.state.get("cenarios") or {}).get(cen_id or "")
     obs.registrar_metrica("zera.hitl_resposta", 1, {"confirmed": str(confirmed), "canal": "botao"})
     if not confirmed or not cen:
-        yield linha({"tipo": "texto", "roteado": True, "texto": "Tudo bem, nada foi contratado. Quer ver outra opção ou tirar alguma dúvida?" if not confirmed
-                     else "Não encontrei mais esse cenário nesta conversa. Peça as opções de novo que eu monto na hora."})
+        txt = ("Tudo bem, nada foi contratado. Quer ver outra opção ou tirar alguma dúvida?\n\n1) Ver as opções de novo\n2) Falar com uma pessoa" if not confirmed
+               else "Não encontrei mais esse cenário nesta conversa. Peça as opções de novo que eu monto na hora.\n\n1) Ver as opções que cabem\n2) Falar com uma pessoa")
+        yield linha(_evento_texto(txt, roteado=True))
+        await _registrar_turno(s, f"[Não confirmei a contratação do cenário {cen_id or '?'} no app.]" if not confirmed else None, txt)
         yield linha({"tipo": "fim", "sugestoes": _sugestoes_chat(c), "finops": obs.custo_da_jornada(None), "estado": {}, "acordo": c.estado.get("acordo")})
         return
     registro = {"consentimento_id": f"cs_{uuid4().hex[:8]}", "acao": "fechar_acordo", "frase_cliente": frase or "Confirmo a contratação",
@@ -454,13 +515,15 @@ async def _stream_contratacao_botao(cliente_id: str, sessao_id: str, request_id:
     venc = "/".join(reversed(str(a.get("proximo_vencimento", "")).split("-"))) if a.get("proximo_vencimento") else "—"
     from motor.modelos import brl
     nome = (c.perfil.nome or "").split(" ")[0]
-    yield linha({"tipo": "texto", "roteado": True, "texto": (f"Pronto{', ' + nome if nome and nome.lower() != 'cliente' else ''}: acordo fechado — {a['prazo']}x de {brl(a['parcela'])}, "
-                                            f"primeira parcela em {venc}, com {a['respiros_max']} respiro(s) por ano se um mês apertar.\n\n"
-                                            "1) Ver como fica meu acordo\n2) Ativar o débito automático (na tela)\n3) Falar com uma pessoa")})
+    respiro = (f", com {a['respiros_max']} respiro{'s' if a['respiros_max'] > 1 else ''} por ano se um mês apertar" if a.get("respiros_max") else "")
+    txt = (f"Pronto{', ' + nome if nome and nome.lower() != 'cliente' else ''}: acordo fechado — {a['prazo']}x de {brl(a['parcela'])}, "
+           f"primeira parcela em {venc}{respiro}.\n\n1) Ver como fica meu acordo\n2) Ativar o débito automático (na tela)\n3) Falar com uma pessoa")
+    yield linha(_evento_texto(txt, roteado=True))
     yield linha({"tipo": "etapa", "etapa": "acompanhar"})
-    # o agente fica sabendo (a sessão do ADK guarda o acordo no estado; o guardrail injeta ACORDO ATIVO nos próximos turnos)
-    await sessoes.append_event(s, Event(author="user", invocation_id=f"btn-{request_id}",
-                                        actions=EventActions(state_delta={"ui": list(s.state.get("ui", []))[-5:] + [{"tipo": "acordo", "dados": resposta}]})))
+    # o agente fica sabendo: o toque e a resposta entram no histórico da sessão do ADK (o modelo vê "acordo fechado" no próximo turno),
+    # o card vai para o estado e o guardrail ainda injeta ACORDO ATIVO nas instruções
+    await _registrar_turno(s, f"[Toquei em Contratar {cen['id']} e confirmei a contratação no app.]", txt,
+                           {"ui": list(s.state.get("ui", []))[-5:] + [{"tipo": "acordo", "dados": resposta}]})
     yield linha({"tipo": "fim", "sugestoes": _sugestoes_chat(c), "finops": obs.custo_da_jornada(None), "estado": {}, "acordo": c.estado.get("acordo")})
 
 
@@ -504,10 +567,36 @@ async def _stream_chat(cliente_id: str, sessao_id: str, texto: str, conteudo: ty
     bloqueios_antes = len(s.state.get("bloqueios_guardrail") or [])
     c0 = _ctx(cliente_id)
     if conteudo is None:
+        # "1" / "2" digitados: a opção correspondente da última lista mostrada, resolvida aqui (sem modelo)
+        op = _opcao_digitada(s, texto)
+        if op:
+            obs.registrar_metrica("zera.chat_roteado", 1, {"tipo": "opcao_digitada", "acao": op["acao"]})
+            if op["acao"] == "contratar":
+                hitl = await _abrir_hitl_botao(s, cliente_id, sessao_id, op.get("cenario", ""))
+                if hitl:
+                    await _registrar_turno(s, f"[Escolhi a opção {op['id']}: {op['rotulo']}]", None)
+                    yield linha({"tipo": "etapa", "etapa": "confirmar"})
+                    yield linha({"tipo": "hitl", "hitl": hitl})
+                    yield linha({"tipo": "fim", "sugestoes": _sugestoes_chat(c0), "finops": obs.custo_da_jornada(None), "estado": {}, "acordo": c0.estado.get("acordo")})
+                    return
+            elif op["acao"] == "tela":
+                txt = _texto_tela((c0.perfil.nome or "").split(" ")[0])
+                yield linha(_evento_texto(txt, roteado=True))
+                await _registrar_turno(s, f"[Escolhi a opção {op['id']}: {op['rotulo']}]", txt)
+                yield linha({"tipo": "fim", "sugestoes": _sugestoes_chat(c0), "finops": obs.custo_da_jornada(None), "estado": {}, "acordo": c0.estado.get("acordo")})
+                return
+            texto = op["rotulo"]   # enviar / humano / pausar: segue o fluxo normal com o texto da opção
         fixo = _roteamento_deterministico(c0, texto)
-        if fixo:  # compreensão de contexto: cumprimento/agradecimento -> resposta direta, sem tools, sem modelo
+        if fixo:  # compreensão de contexto: cumprimento/agradecimento/pausa -> resposta direta, sem tools, sem modelo
             obs.registrar_metrica("zera.chat_roteado", 1, {"tipo": "pausa" if RE_PAUSA.search(_normalizar(texto)) else "saudacao"})
             yield linha(_evento_texto(fixo, roteado=True))
+            await _registrar_turno(s, texto, fixo)
+            yield linha({"tipo": "fim", "sugestoes": _sugestoes_chat(c0), "finops": obs.custo_da_jornada(None), "estado": {}, "acordo": c0.estado.get("acordo")})
+            return
+        if re.search(r"na tela|debito automatico", _normalizar(texto)) and len(texto.split()) <= 8:
+            txt = _texto_tela((c0.perfil.nome or "").split(" ")[0])
+            yield linha(_evento_texto(txt, roteado=True))
+            await _registrar_turno(s, texto, txt)
             yield linha({"tipo": "fim", "sugestoes": _sugestoes_chat(c0), "finops": obs.custo_da_jornada(None), "estado": {}, "acordo": c0.estado.get("acordo")})
             return
     conteudo = conteudo or types.Content(role="user", parts=[types.Part(text=texto)])
@@ -552,6 +641,8 @@ async def _stream_chat(cliente_id: str, sessao_id: str, texto: str, conteudo: ty
                      "texto": "Não consegui responder agora. Nenhum valor foi inventado — pode tentar de novo ou falar com uma pessoa do time."})
     if not final and recusado:
         yield linha({"tipo": "texto", "texto": "Tudo bem, nada foi contratado. Quer ver outra opção ou tirar alguma dúvida?"})
+    if final:   # as opções do modelo ficam na sessão para "1"/"2" digitados no próximo turno
+        await _registrar_turno(s, None, None, {"ultimas_opcoes": _extrair_opcoes(final)[1]})
     s2 = await sessoes.get_session(app_name=APP_NAME, user_id=cliente_id, session_id=sessao_id)
     estado = dict(s2.state) if s2 else {}
     if hitl:

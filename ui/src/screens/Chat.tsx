@@ -233,6 +233,7 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
     if (ocupado || temHitlPendente) return
     setItens((l) => l.map((it, i) => i === idx && it.k === 'zera' ? { ...it, usada: op.id } : it))
     if (op.acao === 'contratar' && op.cenario) return contratar(op.cenario)
+    if (op.acao === 'tela') return onAbrirExperiencia()
     return enviar(op.rotulo)
   }
   async function decidir(idx: number, hitl: Hitl, ok: boolean) {
