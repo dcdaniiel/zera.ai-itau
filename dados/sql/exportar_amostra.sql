@@ -5,7 +5,7 @@
 --
 -- Como rodar (máquina com gcloud/bq, ou Cloud Shell), a partir da raiz do repo:
 --   bq query --project_id=batalha-time-03-vhxk --use_legacy_sql=false --format=csv --max_rows=2000000 \
---     "$(cat dados/sql/exportar_amostra.sql)" > dados/amostra_bq_extrato_sintetico.csv
+--     < dados/sql/exportar_amostra.sql > dados/amostra_bq_extrato_sintetico.csv   # por stdin: o bq lê "-- …" do arquivo como flags se for argumento
 --   uv run python -c "import pandas as pd; d=pd.read_csv('dados/amostra_bq_extrato_sintetico.csv'); print(len(d), d.id_usuario.nunique(), sorted(d.anomes.unique())[:3], d.tipo.value_counts().to_dict())"
 --
 -- Se `zera.perfis_demo` já existir (python -m dados.publicar_bq), prefira os perfis do cluster-alvo do k-means:

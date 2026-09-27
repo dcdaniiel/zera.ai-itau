@@ -29,7 +29,7 @@ experiência guiada) e tudo é recalculado com o valor dito por ela — nunca in
 > **Amostra local:** `dados/amostra_bq_extrato_sintetico.csv` atual veio de um `LIMIT 10000` ordenado por descrição — só saídas de
 > jan/2025, sem entradas —, então todo perfil aparece com "renda não identificada" e a proatividade fica em silêncio até a renda ser
 > informada. Gere uma amostra completa (12 meses, entradas e saídas, 40 clientes do segmento) com
-> `bq query --project_id=batalha-time-03-vhxk --use_legacy_sql=false --format=csv --max_rows=2000000 "$(cat dados/sql/exportar_amostra.sql)" > dados/amostra_bq_extrato_sintetico.csv`
+> `bq query --project_id=batalha-time-03-vhxk --use_legacy_sql=false --format=csv --max_rows=2000000 < dados/sql/exportar_amostra.sql > dados/amostra_bq_extrato_sintetico.csv   # por stdin: o bq lê "-- …" do arquivo como flags se for argumento`
 > e reinicie a API. Em `ZERA_FONTE=bigquery` a renda já vem do histórico completo (`zera.perfil_cliente.renda_media`).
 
 ## Rodar local
