@@ -15,13 +15,9 @@ export const dataBR = (iso: string) => { const [y, m, d] = iso.split('-'); retur
 export const dataLonga = (iso: string) => { const [y, m, d] = iso.split('-'); return `${Number(d)} de ${['jan.', 'fev.', 'mar.', 'abr.', 'mai.', 'jun.', 'jul.', 'ago.', 'set.', 'out.', 'nov.', 'dez.'][Number(m) - 1]} de ${y}` }
 export const iniciais = (nome: string) => nome.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase() ?? '').join('') || 'CL'
 
-/** Faísca de 4 pontas — o ícone da zera.ai (design de referência). */
-export function Faisca({ className = 'h-6 w-6', cor = '#EC7000' }: { className?: string; cor?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
-      <path fill={cor} d="M12 1.5c.6 4.9 3.6 7.9 8.5 8.5v4c-4.9.6-7.9 3.6-8.5 8.5h-4C7.4 17.6 4.4 14.6 0 14v-4c4.9-.6 7.9-3.6 8.5-8.5h3.5z" transform="translate(1.75 0) scale(0.85)" />
-    </svg>
-  )
+/** Logo da zera.ai. */
+export function Faisca({ className = 'h-6 w-6' }: { className?: string }) {
+  return <img src="/logo.png" alt="zera.ai" className={`${className} object-contain`} />
 }
 
 export function HeaderItau({ onBack, titulo, badge, nome = 'Cliente' }: { onBack?: () => void; titulo?: string; badge?: ReactNode; nome?: string }) {
