@@ -82,3 +82,18 @@ export type PerfilResumo = { cliente_id: string; nome: string; persona: boolean;
 export type Clientes = { fonte: string; perfis: PerfilResumo[]; clusters: Array<Record<string, any>> }
 export type Perfil = { cliente_id: string; nome: string; persona: boolean; fonte: string; renda_desconhecida: boolean; renda_mediana: number
   essenciais_mediana: number; total_dividas: number; custo_total_mensal: number; dividas: any[]; capacidade: any; hoje_simulado: string; gatilhos: any[]; acordo: any | null }
+
+/* ---------- conversa com o agente ADK ---------- */
+export type CardChat = { tipo: string; dados: any }
+export type Hitl = { request_id: string; tool: string; args: Record<string, unknown>; hint: string; titulo: string; detalhes: Array<{ k: string; v: string }>; resumo?: string; frase_sugerida: string }
+export type EventoChat =
+  | { tipo: 'tool_call'; nome: string; args: Record<string, unknown>; rotulo: string }
+  | { tipo: 'tool_result'; nome: string; ok: boolean; explicacao: string }
+  | { tipo: 'card'; bloco: CardChat }
+  | { tipo: 'texto'; texto: string }
+  | { tipo: 'llm'; tokens_entrada: number; tokens_saida: number; custo_usd: number }
+  | { tipo: 'hitl'; hitl: Hitl }
+  | { tipo: 'guardrail'; guardrail: { camada: string; tipo: string; trecho?: string } }
+  | { tipo: 'erro'; erro: string; texto: string }
+  | { tipo: 'fim'; sugestoes: string[]; finops: { chamadas: number; tokens_entrada: number; tokens_saida: number; custo_usd: number }; estado: Record<string, unknown>; acordo: any | null }
+export type ChatInicio = { texto: string; sugestoes: string[]; protecoes: string[]; cliente: string; hoje_simulado: string; sessao_id: string }

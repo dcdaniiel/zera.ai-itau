@@ -1,13 +1,14 @@
 import { Activity, CalendarClock, FlaskConical, RotateCcw, Users, WifiOff, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { api, getCliente, setCliente } from './api'
+import { Chat } from './screens/Chat'
 import { Experiencia } from './screens/Experiencia'
 import { Home } from './screens/Home'
 import { Onboarding, Preferencias } from './screens/Onboarding'
 import { Perfis } from './screens/Perfis'
 import type { PerfilResumo, Resposta } from './types'
 
-type Tela = 'perfis' | 'onboarding' | 'preferencias' | 'home' | 'experiencia'
+type Tela = 'perfis' | 'onboarding' | 'preferencias' | 'home' | 'experiencia' | 'chat'
 
 export default function App() {
   const [tela, setTela] = useState<Tela>(getCliente() ? 'onboarding' : 'perfis')
@@ -44,6 +45,9 @@ export default function App() {
     } catch (e) { setErroApi(e instanceof Error ? e.message : 'falha ao salvar preferências') } finally { setOcupado(false) }
   }
   const abrir = () => { setInicial(undefined); setTela('experiencia') }
+  /* Botão flutuante: com indicador proativo -> fluxo guiado (10 telas); sem indicador -> conversa com o agente ADK
+     (guardrails + HITL + direcionamento do produto). Recusar a proatividade nunca impede pedir ajuda. */
+  const abrirPeloBotao = () => { const temBalao = !!proativa && !proativa.silent && proativa.response_type === 'PROACTIVE_MESSAGE'; if (temBalao) abrir(); else { setInicial(undefined); setTela('chat') } }
   const sair = async () => { setTela('home'); await atualizarHome() }
   async function dispensar() { setOcupado(true); try { await api.evento('DISMISS'); await atualizarHome() } finally { setOcupado(false) } }
 
@@ -59,15 +63,16 @@ export default function App() {
         {tela === 'perfis' && <Perfis onEscolher={escolherPerfil} />}
         {tela === 'onboarding' && <Onboarding nome={nome} onAtivar={() => setTela('preferencias')} onDepois={() => { setTela('home'); atualizarHome() }} />}
         {tela === 'preferencias' && <Preferencias nome={nome} onVoltar={() => setTela('onboarding')} onSalvar={salvarPreferencias} />}
-        {tela === 'home' && <Home nome={nome} proativa={proativa} acordo={acordo} erro={erroApi} onAbrir={abrir} onDispensar={dispensar} onRecarregar={atualizarHome} />}
-        {tela === 'experiencia' && <Experiencia onSair={sair} inicial={inicial} />}
+        {tela === 'home' && <Home nome={nome} proativa={proativa} acordo={acordo} erro={erroApi} onAbrir={abrir} onAbrirBotao={abrirPeloBotao} onDispensar={dispensar} onRecarregar={atualizarHome} />}
+        {tela === 'experiencia' && <Experiencia onSair={sair} inicial={inicial} onConversar={() => setTela('chat')} />}
+        {tela === 'chat' && <Chat nome={nome} onSair={sair} onAbrirExperiencia={abrir} />}
 
         {erroApi && tela !== 'home' && (
           <div className="absolute inset-x-3 top-3 z-40 flex items-center gap-2 rounded-2xl bg-danger-soft px-3 py-2 text-xs text-danger shadow"><WifiOff className="h-4 w-4 shrink-0" /> {erroApi}<button className="ml-auto font-bold" onClick={() => setErroApi(null)}>ok</button></div>
         )}
         {ocupado && <div className="absolute inset-0 z-40 bg-white/40 backdrop-blur-[1px] grid place-items-center"><div className="h-9 w-9 rounded-full border-4 border-itau-orange border-t-transparent animate-spin" /></div>}
 
-        {tela !== 'perfis' && (
+        {tela !== 'perfis' && tela !== 'chat' && (
           <button onClick={() => { setDev((v) => !v); if (!dev) verMetricas() }} aria-label="Controles da demo"
             className="absolute top-[4.25rem] right-3 z-30 h-9 w-9 rounded-full bg-itau-blue text-white grid place-items-center shadow-lg opacity-60 active:scale-95">
             {dev ? <X className="h-4 w-4" /> : <FlaskConical className="h-4 w-4" />}

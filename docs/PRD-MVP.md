@@ -184,7 +184,7 @@ flowchart LR
 | Entrada | Fora de escopo: investimento, cripto, apostas, crédito novo | **Bloqueia e redireciona** para a jornada | idem |
 | Entrada | PII (CPF, telefone, cartão) | **Redige** antes do modelo (P1: Sensitive Data Protection) | idem |
 | Entrada | Vulnerabilidade (desespero, doença, luto, ameaça) | **Não bloqueia**: muda o tom, proíbe negociar, exige `escalar_humano` | idem |
-| Ferramentas | Ação com efeito (`fechar_acordo`, `acionar_respiro`, `amortizar(aplicar)`) sem consentimento nesta sessão | **Bloqueia a tool** e instrui a pedir confirmação; consentimento é de uso único | `exigir_consentimento` (`before_tool_callback`) |
+| Ferramentas | Ação com efeito (`fechar_acordo`, `acionar_respiro`, `amortizar(aplicar)`) | **HITL nativo do ADK**: `FunctionTool(require_confirmation=True)` — o ADK pausa (`adk_request_confirmation`), o app mostra o card com os números do motor e só "Confirmar" (`POST /chat/confirmar`) executa a tool; recusa → `acao_recusada`, tool não roda | `tools.py` + `exigir_consentimento` (`before_tool_callback`) |
 | Ferramentas | Números devolvidos pelas tools | Acumula `numeros_permitidos` | `registrar_numeros` (`after_tool_callback`) |
 | **Saída** | Pressão/cobrança ("última chance", "será processada"), promessa indevida ("garanto nome limpo hoje"), vazamento de prompt, recomendação fora de escopo | **Bloqueia** — resposta do modelo descartada, resposta fixa | `guardrail_saida` (`after_model_callback`); Model Armor `sanitizeModelResponse` |
 | Saída | PII ecoada | **Redige** | idem |
@@ -198,7 +198,7 @@ flowchart LR
 | RNF-01 | **Camada de agentes só GCP/Gemini**: ADK + Vertex AI Agent Engine + modelos Gemini | Sem SDKs de outros provedores |
 | RNF-02 | **O LLM nunca calcula**: todo valor vem de tool | Prompt + guardrail de saída |
 | RNF-03 | **Parcela ≤ parcela máxima por construção**; sem cenário → `escalar_humano` | Motor |
-| RNF-04 | **Consentimento por ação**, registrado com a frase do cliente e timestamp | `before_tool_callback` + `consentimentos/` |
+| RNF-04 | **Consentimento por ação**, registrado com a frase do cliente, canal (`hitl_app`) e timestamp | `require_confirmation` (HITL do ADK) + `before_tool_callback` + estado do cliente |
 | RNF-05 | **Minimização de dados**: agente recebe agregados, nunca o extrato bruto; IDs pseudonimizados | Tools devolvem features |
 | RNF-06 | **LGPD**: finalidade explícita, consentimento versionado, direito de esquecer (`revogar_consentimento` grava snapshot `apagado`), retenção | BigQuery `zera.estado_cliente` |
 | RNF-07 | **Observabilidade**: trace por turno, eventos de guardrail e de negócio | Cloud Logging/Trace + BigQuery |
@@ -327,7 +327,7 @@ Regras invioláveis:
 1. Todo número (R$, %, prazo, data) vem de uma tool. Nunca calcule, arredonde ou estime. Se não tem tool, diga que vai verificar.
 2. Nunca proponha parcela acima de parcela_maxima. Só apresente planos com cabe=true.
 3. Sempre mostre custo total e o que muda em relação a hoje. Sempre ofereça "não fazer nada agora" e "falar com uma pessoa".
-4. Antes de fechar acordo, respiro ou amortização: peça confirmação explícita, chame registrar_consentimento com a frase do cliente e só então execute.
+4. Fechar acordo, respiro e amortização são confirmados pela cliente no botão do app (HITL): ao chamar a tool, o ADK pausa e o app pede a confirmação — nunca diga que já contratou antes do resultado da tool; "sim" digitado não contrata.
 5. Não peça dados que já estão nas tools. Não colete dados sensíveis desnecessários.
 6. Sinais de sofrimento, doença, luto, ameaça, desespero: acolha, não negocie, chame escalar_humano.
 7. Se nenhum plano cabe: diga isso com honestidade, priorize a dívida mais cara e escale para humano.
@@ -341,13 +341,13 @@ Quando a sessão começa com um gatilho (risco_parcela, dinheiro_extra, pre_nega
 | Callback | Função |
 |---|---|
 | `before_model_callback` | DLP redige CPF/telefone/endereço; classificador de vulnerabilidade; injeta memória do cliente e `gatilho` |
-| `before_tool_callback` | Bloqueia `fechar_acordo`, `acionar_respiro`, `amortizar` sem consentimento registrado na sessão para aquela ação; loga a chamada |
+| `before_tool_callback` | Roda antes do gate de confirmação do ADK: na primeira chamada deixa passar (o ADK pausa com `adk_request_confirmation`); na retomada, se a cliente recusou no app, devolve `acao_recusada` e a tool não executa (`bloqueios_consentimento++`); loga a chamada |
 | `after_tool_callback` | Atualiza `state["ultimos_numeros"]` com `numeros_permitidos`; grava evento em BigQuery |
 | `after_model_callback` | Extrai valores `R$`, `%`, `x` (prazo) da resposta e valida contra `ultimos_numeros`; se houver valor estranho, reescreve pedindo ao modelo que use só a lista; conta `alucinacao_numerica` |
 
 ### 8.6 Canal e UI
 
-Chat web estilo app Itaú (React/Vite em Firebase Hosting, ou Streamlit no Cloud Run se o time for Python-only). Contrato de mensagem rica: `{"texto": "...", "ui": [{"tipo": "raio_x" | "planos" | "acordo" | "gatilho", "dados": {...}}]}` — o agente devolve o JSON das tools em `ui` e a UI renderiza cards com botões (**Aceitar plano C**, **Usar respiro**, **Amortizar**), que enviam `acao` estruturada de volta (vira consentimento com timestamp). Acessibilidade: botões grandes, contraste, linguagem simples; áudio no P2.
+Chat web estilo app Itaú (React/Vite servido pelo mesmo Cloud Run da API). A conversa é um stream NDJSON (`POST /chat/stream`): cada evento do Runner do ADK vira um componente na tela assim que acontece — chip de tool ("calculando capacidade…"), card com o resultado do motor (`ui: [{"tipo": "raio_x" | "capacidade" | "prioridades" | "cenarios" | "planos" | "acordo" | "amortizacao", ...}]`), texto, selo de guardrail e custo do turno. Ações com efeito viram o **card HITL** (`adk_request_confirmation`) com botões **Confirmar** / **Agora não**, que respondem em `POST /chat/confirmar` (vira consentimento com canal, frase e timestamp). A abertura é determinística (`GET /chat/inicio`): contexto do gatilho, três proteções e sugestões de próximo passo. Acessibilidade: botões grandes, contraste, linguagem simples; áudio no P2.
 
 ---
 
@@ -530,17 +530,27 @@ root_agent = LlmAgent(
 ```
 
 ```python
-# zera_agent/guardrails.py (trecho)
+# zera_agent/tools.py (trecho) — HITL nativo do ADK: a tool só roda depois da confirmação humana no app
+from google.adk.tools import FunctionTool
+
+fechar_acordo_tool = FunctionTool(fechar_acordo, require_confirmation=True)
+acionar_respiro_tool = FunctionTool(acionar_respiro, require_confirmation=True)
+amortizar_tool = FunctionTool(amortizar, require_confirmation=lambda tool_context, valor, preservar_reserva=True, aplicar=False: bool(aplicar))
+
+# zera_agent/guardrails.py (trecho) — roda ANTES do gate de confirmação; na retomada, honra a recusa
 import re
 ACOES_COM_CONSENTIMENTO = {"fechar_acordo", "acionar_respiro", "amortizar"}
 PADRAO_VALOR = re.compile(r"R\$\s?\d{1,3}(?:\.\d{3})*(?:,\d{2})?")
 
 def exigir_consentimento(tool, args, tool_context):
     if tool.name in ACOES_COM_CONSENTIMENTO:
-        if not tool_context.state.get("consentimento", {}).get(tool.name):
-            return {"erro": "consentimento_ausente",
-                    "instrucao": "Peça confirmação explícita e chame registrar_consentimento antes."}
-    return None  # segue
+        conf = getattr(tool_context, "tool_confirmation", None)
+        if conf is None:
+            return None  # 1ª chamada: o ADK pausa e emite adk_request_confirmation (card HITL no app)
+        if not conf.confirmed:
+            tool_context.state["bloqueios_consentimento"] = tool_context.state.get("bloqueios_consentimento", 0) + 1
+            return {"erro": "acao_recusada", "instrucao": "A cliente não confirmou no app. Nada foi contratado; ofereça outra opção."}
+    return None  # segue (a tool registra o consentimento com canal=hitl_app e a frase da cliente)
 
 def registrar_numeros_e_evento(tool, args, tool_context, tool_response):
     permitidos = set(tool_context.state.get("ultimos_numeros", []))

@@ -38,16 +38,32 @@ def _runner(roteiro: dict) -> tuple[InMemoryRunner, FakeLlm]:
     return InMemoryRunner(agent=agente, app_name="zera"), llm
 
 
-async def _conversar(runner: InMemoryRunner, mensagens: list[str]) -> tuple[list[str], dict]:
+async def _conversar(runner: InMemoryRunner, mensagens: list[str], confirmar: bool | None = None) -> tuple[list[str], dict]:
+    """Conversa com o agente. Se uma tool com efeito pausar (HITL: adk_request_confirmation), responde como o app faria
+    (confirmar=True/False); confirmar=None deixa pausado — nada executa."""
     sessao = await runner.session_service.create_session(app_name="zera", user_id=CLIENTE, state={"cliente_id": CLIENTE})
-    respostas = []
-    for msg in mensagens:
-        conteudo = types.Content(role="user", parts=[types.Part(text=msg)])
+    respostas, pendentes = [], []
+
+    async def rodar(conteudo):
         async for ev in runner.run_async(user_id=CLIENTE, session_id=sessao.id, new_message=conteudo):
+            for fc in ev.get_function_calls():
+                if fc.name == "adk_request_confirmation":
+                    pendentes.append(fc.id)
             if ev.is_final_response() and ev.content and ev.content.parts:
-                respostas.append("".join(p.text or "" for p in ev.content.parts if p.text))
+                t = "".join(p.text or "" for p in ev.content.parts if p.text)
+                if t:
+                    respostas.append(t)
+
+    for msg in mensagens:
+        await rodar(types.Content(role="user", parts=[types.Part(text=msg)]))
+        while pendentes and confirmar is not None:
+            rid = pendentes.pop(0)
+            await rodar(types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
+                id=rid, name="adk_request_confirmation", response={"confirmed": confirmar, "payload": {"frase_cliente": "Confirmo" if confirmar else "não"}}))]))
     sessao = await runner.session_service.get_session(app_name="zera", user_id=CLIENTE, session_id=sessao.id)
-    return respostas, dict(sessao.state)
+    estado = dict(sessao.state)
+    estado["_hitl_pendentes"] = pendentes
+    return respostas, estado
 
 
 def test_raio_x_e_guardrail_de_numeros():
@@ -67,27 +83,28 @@ def test_raio_x_e_guardrail_de_numeros():
     assert [b["tipo"] for b in estado["ui"]] == ["raio_x", "prioridades"]
 
 
-def test_consentimento_bloqueia_e_libera():
+def test_hitl_pausa_sem_confirmacao_e_executa_com_confirmacao():
     roteiro = {
         "quero o plano C": [
             ("call", "simular_planos", {}),
-            ("call", "fechar_acordo", {"plano_id": "C"}),          # bloqueado: sem consentimento
-            ("text", "Você confirma que quer fechar o plano C?"),
-        ],
-        "sim, confirmo o plano C": [
-            ("call", "registrar_consentimento", {"acao": "fechar_acordo", "frase_cliente": "sim, confirmo o plano C"}),
-            ("call", "fechar_acordo", {"plano_id": "C"}),
+            ("call", "fechar_acordo", {"plano_id": "C"}),          # pausa: confirmação humana no app (HITL nativo do ADK)
             ("text", "Fechado: 29x de R$ 303,04, primeira parcela em 10/10."),
         ],
     }
-    runner, llm = _runner(roteiro)
-    respostas, estado = asyncio.run(_conversar(runner, ["quero o plano C", "sim, confirmo o plano C"]))
-    assert estado["bloqueios_consentimento"] == 1
+    runner, _ = _runner(roteiro)
+    respostas, estado = asyncio.run(_conversar(runner, ["quero o plano C"], confirmar=None))
+    assert len(estado["_hitl_pendentes"]) == 1 and Contexto.para(CLIENTE).acordo is None       # pausado: nada executado
+    Contexto.limpar_cache()
+    runner, _ = _runner(roteiro)
+    respostas, estado = asyncio.run(_conversar(runner, ["quero o plano C"], confirmar=False))
+    assert Contexto.para(CLIENTE).acordo is None and estado["bloqueios_consentimento"] == 1    # recusou no app: não executa
+    Contexto.limpar_cache()
+    runner, _ = _runner(roteiro)
+    respostas, estado = asyncio.run(_conversar(runner, ["quero o plano C"], confirmar=True))
     ctx = Contexto.para(CLIENTE)
     assert ctx.acordo is not None and ctx.acordo.status == "ativo" and ctx.acordo.parcela == 303.04
-    assert ctx.estado["consentimentos"][0]["frase_cliente"] == "sim, confirmo o plano C"
-    assert estado["consentimento"] == {}             # consentimento é de uso único
-    assert estado["alucinacao_numerica"] == 0 if "alucinacao_numerica" in estado else True
+    assert ctx.estado["consentimentos"][-1]["canal"] == "hitl_app" and ctx.estado["consentimentos"][-1]["frase_cliente"] == "Confirmo"
+    assert "303,04" in respostas[-1] and estado.get("alucinacao_numerica", 0) == 0
 
 
 def test_gatilho_de_respiro_apos_avancar_tempo():
@@ -106,13 +123,12 @@ def test_gatilho_de_respiro_apos_avancar_tempo():
                      "Quer usar 1 dos seus 2 respiros?"),
         ],
         "quero sim": [
-            ("call", "registrar_consentimento", {"acao": "acionar_respiro", "frase_cliente": "quero sim"}),
-            ("call", "acionar_respiro", {}),
+            ("call", "acionar_respiro", {}),                        # pausa -> confirmação no app -> executa
             ("text", "Feito: a parcela de janeiro foi para o fim. Próximo vencimento 10/02."),
         ],
     }
     runner, llm = _runner(roteiro)
-    respostas, estado = asyncio.run(_conversar(runner, ["oi", "quero sim"]))
+    respostas, estado = asyncio.run(_conversar(runner, ["oi", "quero sim"], confirmar=True))
     assert estado["gatilho"] == []                                     # gatilho consumido pela ação
     assert Contexto.para(CLIENTE).acordo.respiros_usados == 1
     assert Contexto.para(CLIENTE).estado["gatilhos_pendentes"] == []

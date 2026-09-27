@@ -357,7 +357,7 @@ function Erro({ r, onAcao, onSair }: { r: Resposta; onAcao: OnAcao; onSair: () =
 /* ---------- shell ---------- */
 type Bolha = { de: 'cliente' | 'zera'; texto: string }
 
-export function Experiencia({ onSair, inicial }: { onSair: () => void; inicial?: Resposta }) {
+export function Experiencia({ onSair, inicial, onConversar }: { onSair: () => void; inicial?: Resposta; onConversar?: () => void }) {
   const [resp, setResp] = useState<Resposta | null>(inicial ?? null)
   const [carregando, setCarregando] = useState(false)
   const [status, setStatus] = useState<{ title: string; steps: string[]; feitos: number } | null>(null)
@@ -397,7 +397,7 @@ export function Experiencia({ onSair, inicial }: { onSair: () => void; inicial?:
       <div className="relative flex items-center justify-between px-4 pt-4 pb-2">
         {voltar ? <button onClick={() => acao('CANCEL')} aria-label="Voltar" className="h-10 w-10 -ml-2 grid place-items-center rounded-full active:bg-black/5"><ChevronLeft /></button>
           : <button onClick={onSair} aria-label="Fechar" className="h-10 w-10 -ml-2 grid place-items-center rounded-full active:bg-black/5"><X /></button>}
-        <span className="flex items-center gap-2 text-[15px] font-semibold text-ink-soft"><History className="h-4 w-4" /> zera.ai</span>
+        <span className="flex items-center gap-2 text-[15px] font-semibold text-ink-soft"><History className="h-4 w-4" /> zera.ai{onConversar && <button onClick={onConversar} className="ml-2 text-[12px] font-bold text-itau-orange">Conversar</button>}</span>
       </div>
       {esperando && (
         <div className="absolute inset-x-0 top-14 z-20 flex justify-center pointer-events-none" aria-live="polite">

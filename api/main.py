@@ -14,8 +14,10 @@ Experiência zera.ai (spec v1 — máquina de estados determinística; o LLM só
     GET  /v1/clientes/{id}/proativa    PROACTIVE_MESSAGE ou {silent, checks}
     GET  /v1/clientes/{id}/experiencia  resposta atual (contrato estruturado)
     POST /v1/clientes/{id}/experiencia/evento {acao, payload, sessao_id}
-Conversa livre com o agente ADK (tools determinísticas + consentimento)
-    POST /chat {cliente_id, sessao_id, mensagem}
+Conversa livre com o agente ADK (tools determinísticas + guardrails + HITL nativo do ADK)
+    GET  /chat/inicio?cliente_id=      abertura determinística (0 tokens), proteções e sugestões
+    POST /chat {cliente_id, sessao_id, mensagem}         -> {texto, ui[], hitl?, guardrail?, sugestoes[], finops}
+    POST /chat/confirmar {request_id, confirmed, frase}  -> retoma a tool pausada com a decisão humana
 Demo / operação do relógio simulado
     POST /simular_tempo | GET /gatilhos/{id} | POST /reset/{id}
 
@@ -24,6 +26,7 @@ Toda etapa é medida (spans OTel + métricas + logs estruturados) — ver zera_a
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -43,7 +46,7 @@ OTEL = obs.configurar_otel()
 
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
-from fastapi.responses import JSONResponse  # noqa: E402
+from fastapi.responses import JSONResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from google.adk.runners import Runner  # noqa: E402
 from google.adk.sessions import InMemorySessionService  # noqa: E402
@@ -117,6 +120,14 @@ class ChatIn(BaseModel):
     mensagem: str
 
 
+class ConfirmarIn(BaseModel):
+    cliente_id: str = "cli_001"
+    sessao_id: str = "demo"
+    request_id: str                      # id do adk_request_confirmation devolvido em `hitl`
+    confirmed: bool = True
+    frase: str = "Confirmo"
+
+
 class TempoIn(BaseModel):
     cliente_id: str = "cli_001"
     ate: str  # YYYY-MM-DD
@@ -130,20 +141,83 @@ async def _sessao(cliente_id: str, sessao_id: str):
     return s
 
 
-async def _rodar_agente(cliente_id: str, sessao_id: str, texto: str, onde: str, state_delta: dict | None = None) -> str:
-    """Um turno do agente ADK com contabilidade FinOps (tokens/custo por chamada, por jornada) e span próprio."""
+async def _rodar_agente(cliente_id: str, sessao_id: str, texto: str, onde: str, state_delta: dict | None = None,
+                        conteudo: types.Content | None = None) -> dict:
+    """Um turno do agente ADK com contabilidade FinOps e detecção de HITL (adk_request_confirmation).
+
+    Devolve {texto, hitl}. `hitl` aparece quando uma tool com efeito (fechar_acordo, acionar_respiro, amortizar) pausou
+    esperando a confirmação humana: o app mostra o card e responde em POST /chat/confirmar.
+    """
     s = await _sessao(cliente_id, sessao_id)
-    conteudo = types.Content(role="user", parts=[types.Part(text=texto)])
-    resposta = ""
+    conteudo = conteudo or types.Content(role="user", parts=[types.Part(text=texto)])
+    resposta, hitl = "", None
     inicio = time.perf_counter()
     jornada = (Contexto.para(cliente_id).estado.get("experiencia") or {}).get("jornada_id")
     with obs.medir("agente.turno", {"onde": onde, "cliente": cliente_id}):
         async for ev in runner.run_async(user_id=cliente_id, session_id=s.id, new_message=conteudo, state_delta=state_delta):
             if ev.usage_metadata:
                 obs.registrar_llm(ev.usage_metadata, MODEL, jornada, onde, (time.perf_counter() - inicio) * 1000)
+            for fc in ev.get_function_calls():
+                if fc.name == "adk_request_confirmation" and fc.args:
+                    original = fc.args.get("originalFunctionCall") or {}
+                    hitl = {"request_id": fc.id, "tool": original.get("name"), "args": original.get("args") or {},
+                            "hint": (fc.args.get("toolConfirmation") or {}).get("hint", "")}
             if ev.is_final_response() and ev.content and ev.content.parts:
-                resposta = "".join(p.text or "" for p in ev.content.parts if p.text)
-    return resposta
+                texto_ev = "".join(p.text or "" for p in ev.content.parts if p.text)
+                if texto_ev:
+                    resposta = texto_ev
+    if hitl:
+        hitl = _enriquecer_hitl(cliente_id, sessao_id, hitl)
+        obs.registrar_metrica("zera.hitl_pedido", 1, {"tool": str(hitl.get("tool"))})
+    return {"texto": resposta, "hitl": hitl}
+
+
+def _enriquecer_hitl(cliente_id: str, sessao_id: str, hitl: dict) -> dict:
+    """Card de confirmação com os números do motor (nunca do texto do modelo)."""
+    from zera_agent.tools import ROTULOS_HITL
+
+    c = Contexto.para(cliente_id)
+    tool, args = hitl.get("tool"), hitl.get("args") or {}
+    hitl["titulo"] = ROTULOS_HITL.get(tool, tool)
+    hitl["detalhes"] = []
+    hitl["frase_sugerida"] = {"fechar_acordo": "Confirmo a contratação", "acionar_respiro": "Confirmo o respiro", "amortizar": "Confirmo a amortização"}.get(tool, "Confirmo")
+    return hitl
+
+
+def _hitl_com_sessao(hitl: dict, estado_sessao: dict, cliente_id: str) -> dict:
+    """Completa o card com o cenário/plano guardado na sessão (state['cenarios'] / state['planos'])."""
+    from motor.modelos import brl
+
+    c = Contexto.para(cliente_id)
+    tool, args = hitl.get("tool"), hitl.get("args") or {}
+    if tool == "fechar_acordo":
+        pid = str(args.get("plano_id", "")).upper()
+        cen = (estado_sessao.get("cenarios") or {}).get(pid)
+        plano = (estado_sessao.get("planos") or {}).get(pid)
+        if cen:
+            hitl["detalhes"] = [("Opção", f"{pid} · {', '.join(cen.get('rotulos', []))}"), ("Parcela", f"{brl(cen['comprometimento_mensal'])}/mês"),
+                                ("Prazo", f"{cen['prazo_meses']} meses"), ("Total", brl(cen["custo_total"])),
+                                ("Saldo devedor", brl(cen["saldo_original"])), ("Juros do acordo", brl(cen["juros_acordo"]))]
+            hitl["resumo"] = cen.get("resumo")
+        elif plano:
+            hitl["detalhes"] = [("Plano", f"{pid} · {plano['nome']}"), ("Parcela", f"{brl(plano['parcela'])}/mês"), ("Prazo", f"{plano['prazo']} meses"), ("Total", brl(plano["total_pago"]))]
+    elif tool == "acionar_respiro" and c.acordo:
+        hitl["detalhes"] = [("Parcela adiada", brl(c.acordo.parcela)), ("Próximo vencimento", c.acordo.proximo_vencimento),
+                            ("Respiros restantes", str(c.acordo.respiros_max - c.acordo.respiros_usados))]
+    elif tool == "amortizar":
+        hitl["detalhes"] = [("Valor", brl(float(args.get("valor", 0)))), ("Reserva", "sim" if args.get("preservar_reserva", True) else "não")]
+    hitl["detalhes"] = [{"k": k, "v": v} for k, v in hitl["detalhes"]]
+    return hitl
+
+
+def _sugestoes_chat(c: Contexto) -> list[str]:
+    """Direcionamento do produto: próximos passos sempre visíveis (a conversa nunca fica sem rumo)."""
+    acordo = c.estado.get("acordo")
+    if acordo and acordo.get("status") == "ativo":
+        return ["Como está meu acordo?", "Este mês está apertado, posso usar um respiro?", "Entrou um dinheiro extra, o que faço?", "Quero falar com uma pessoa"]
+    if c.perfil.renda_desconhecida:
+        return ["Minha renda é de uns R$ 2.500 por mês", "Quanto eu devo hoje?", "Quero falar com uma pessoa"]
+    return ["Quanto eu devo hoje e quanto cresce por mês?", "Quais opções cabem no meu bolso?", "Por que essa opção?", "Quero falar com uma pessoa"]
 
 
 # ======================================================================
@@ -171,15 +245,143 @@ async def metrics():
     return obs.resumo()
 
 
+@app.get("/chat/inicio")
+async def chat_inicio(cliente_id: str, sessao_id: str = "demo"):
+    """Abertura determinística da conversa (0 tokens): contexto, proteções e direcionamento do produto."""
+    c = _ctx(cliente_id)
+    nome = (c.perfil.nome or "").split(" ")[0]
+    vocativo = f"{nome}, " if nome and nome.lower() != "cliente" else ""
+    gat = c.estado.get("gatilhos_pendentes", [])
+    acordo = c.estado.get("acordo")
+    if acordo and acordo.get("status") == "ativo":
+        texto = (f"{vocativo}seu acordo está em dia: {acordo['parcela']:.2f} por mês, próximo vencimento em {acordo['proximo_vencimento']}. "
+                 "Se um mês apertar, dá para usar um respiro; se entrar um dinheiro extra, dá para amortizar.")
+    elif c.perfil.renda_desconhecida:
+        texto = (f"{vocativo}sou a zera.ai, do Itaú. Vi suas dívidas no extrato, mas não a sua renda — antes de calcular qualquer coisa, "
+                 "preciso que você me diga quanto entra por mês, mais ou menos.")
+    elif gat:
+        texto = f"{vocativo}sou a zera.ai, do Itaú. Vi que {gat[0]['mensagem'][0].lower() + gat[0]['mensagem'][1:]} Quer que eu mostre o que cabe no seu mês?"
+    else:
+        texto = f"{vocativo}sou a zera.ai, do Itaú. Posso te ajudar a organizar seus pagamentos: ver quanto você deve, quanto cresce por mês e quais opções cabem no seu bolso."
+    s = await _sessao(cliente_id, sessao_id)
+    return {"texto": texto, "sugestoes": _sugestoes_chat(c), "protecoes": [
+        "Eu não peço senha, código nem dados de outras pessoas, e não faço transferências.",
+        "Todo número vem da calculadora do banco — nunca do modelo de linguagem.",
+        "Nada é contratado sem a sua confirmação no botão do app.",
+    ], "cliente": c.perfil.nome, "hoje_simulado": c.estado["hoje"], "sessao_id": s.id}
+
+
+async def _resposta_chat(cliente_id: str, sessao_id: str, resultado: dict, ja_vistos: int, bloqueios_antes: int) -> dict:
+    s = await sessoes.get_session(app_name=APP_NAME, user_id=cliente_id, session_id=sessao_id)
+    estado = dict(s.state) if s else {}
+    ui = estado.get("ui", [])
+    hitl = _hitl_com_sessao(resultado["hitl"], estado, cliente_id) if resultado.get("hitl") else None
+    bloqueios = estado.get("bloqueios_guardrail") or []
+    c = _ctx(cliente_id)
+    return {"texto": resultado["texto"], "ui": ui[ja_vistos:] if len(ui) >= ja_vistos else ui, "hitl": hitl,
+            "guardrail": bloqueios[-1] if len(bloqueios) > bloqueios_antes else None,
+            "sugestoes": _sugestoes_chat(c),
+            "estado": {k: estado.get(k) for k in ("alucinacao_numerica", "bloqueios_consentimento", "vulneravel", "gatilho", "pii_redigida")},
+            "finops": obs.custo_da_jornada((c.estado.get("experiencia") or {}).get("jornada_id"))}
+
+
 @app.post("/chat")
 async def chat(body: ChatIn):
+    """Conversa livre com o agente ADK: tools determinísticas + guardrails + HITL (confirmação humana) para ações com efeito."""
     s = await _sessao(body.cliente_id, body.sessao_id)
     ja_vistos = len(s.state.get("ui", []))
-    texto = await _rodar_agente(body.cliente_id, body.sessao_id, body.mensagem, "chat")
-    s = await sessoes.get_session(app_name=APP_NAME, user_id=body.cliente_id, session_id=s.id)
-    ui = s.state.get("ui", [])
-    return {"texto": texto, "ui": ui[ja_vistos:] if len(ui) >= ja_vistos else ui,
-            "estado": {k: s.state.get(k) for k in ("alucinacao_numerica", "bloqueios_consentimento", "vulneravel", "gatilho")}}
+    bloqueios_antes = len(s.state.get("bloqueios_guardrail") or [])
+    resultado = await _rodar_agente(body.cliente_id, body.sessao_id, body.mensagem, "chat")
+    return await _resposta_chat(body.cliente_id, body.sessao_id, resultado, ja_vistos, bloqueios_antes)
+
+
+@app.post("/chat/stream")
+async def chat_stream(body: ChatIn):
+    """Mesma conversa, em NDJSON conforme o ADK emite os eventos: a UI mostra cada tool, cada card e o texto assim que
+    acontecem (interação rápida e visível com a persona). Linhas: {tipo: tool_call|card|texto|hitl|guardrail|fim}."""
+    return StreamingResponse(_stream_chat(body.cliente_id, body.sessao_id, body.mensagem, None), media_type="application/x-ndjson")
+
+
+@app.post("/chat/confirmar/stream")
+async def chat_confirmar_stream(body: ConfirmarIn):
+    conteudo = types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
+        id=body.request_id, name="adk_request_confirmation",
+        response={"confirmed": body.confirmed, "payload": {"frase_cliente": body.frase, "canal": "app"}}))])
+    obs.registrar_metrica("zera.hitl_resposta", 1, {"confirmed": str(body.confirmed)})
+    return StreamingResponse(_stream_chat(body.cliente_id, body.sessao_id, "", conteudo, recusado=not body.confirmed), media_type="application/x-ndjson")
+
+
+async def _stream_chat(cliente_id: str, sessao_id: str, texto: str, conteudo: types.Content | None, recusado: bool = False):
+    from zera_agent.tools import ROTULOS_HITL
+
+    linha = lambda obj: json.dumps(obj, ensure_ascii=False, default=str) + "\n"  # noqa: E731
+    s = await _sessao(cliente_id, sessao_id)
+    vistos = len(s.state.get("ui", []))
+    bloqueios_antes = len(s.state.get("bloqueios_guardrail") or [])
+    conteudo = conteudo or types.Content(role="user", parts=[types.Part(text=texto)])
+    jornada = (Contexto.para(cliente_id).estado.get("experiencia") or {}).get("jornada_id")
+    inicio = time.perf_counter()
+    final, hitl = "", None
+    try:
+        with obs.medir("agente.turno", {"onde": "chat_stream", "cliente": cliente_id}):
+            async for ev in runner.run_async(user_id=cliente_id, session_id=s.id, new_message=conteudo):
+                if ev.usage_metadata:
+                    item = obs.registrar_llm(ev.usage_metadata, MODEL, jornada, "chat_stream", (time.perf_counter() - inicio) * 1000)
+                    yield linha({"tipo": "llm", "tokens_entrada": item["tokens_entrada"], "tokens_saida": item["tokens_saida"], "custo_usd": item["custo_usd"]})
+                for fc in ev.get_function_calls():
+                    if fc.name == "adk_request_confirmation" and fc.args:
+                        original = fc.args.get("originalFunctionCall") or {}
+                        hitl = {"request_id": fc.id, "tool": original.get("name"), "args": original.get("args") or {}, "hint": (fc.args.get("toolConfirmation") or {}).get("hint", "")}
+                    else:
+                        yield linha({"tipo": "tool_call", "nome": fc.name, "args": fc.args or {}, "rotulo": ROTULOS_HITL.get(fc.name, fc.name)})
+                for fr in ev.get_function_responses():
+                    if fr.name != "adk_request_confirmation":
+                        resp = fr.response if isinstance(fr.response, dict) else {}
+                        yield linha({"tipo": "tool_result", "nome": fr.name, "ok": resp.get("ok", "erro" not in resp), "explicacao": str(resp.get("explicacao", resp.get("erro", "")))[:300]})
+                delta_ui = (ev.actions.state_delta or {}).get("ui") if ev.actions else None
+                if delta_ui:
+                    for bloco in delta_ui[vistos:] if len(delta_ui) >= vistos else delta_ui:
+                        yield linha({"tipo": "card", "bloco": bloco})
+                    vistos = len(delta_ui)
+                if ev.is_final_response() and ev.content and ev.content.parts:
+                    t = "".join(p.text or "" for p in ev.content.parts if p.text)
+                    if t:
+                        final = t
+                        yield linha({"tipo": "texto", "texto": t})
+    except Exception as e:  # noqa: BLE001 — nunca deixa a UI sem resposta
+        log.exception("chat_stream falhou")
+        yield linha({"tipo": "erro", "erro": str(e)[:300], "texto": "Não consegui responder agora. Nenhum valor foi inventado — pode tentar de novo ou falar com uma pessoa do time."})
+    if not final and recusado:
+        yield linha({"tipo": "texto", "texto": "Tudo bem, nada foi contratado. Quer ver outra opção ou tirar alguma dúvida?"})
+    s2 = await sessoes.get_session(app_name=APP_NAME, user_id=cliente_id, session_id=sessao_id)
+    estado = dict(s2.state) if s2 else {}
+    if hitl:
+        hitl = _hitl_com_sessao(_enriquecer_hitl(cliente_id, sessao_id, hitl), estado, cliente_id)
+        obs.registrar_metrica("zera.hitl_pedido", 1, {"tool": str(hitl.get("tool"))})
+        yield linha({"tipo": "hitl", "hitl": hitl})
+    bloqueios = estado.get("bloqueios_guardrail") or []
+    if len(bloqueios) > bloqueios_antes:
+        yield linha({"tipo": "guardrail", "guardrail": bloqueios[-1]})
+    c = _ctx(cliente_id)
+    yield linha({"tipo": "fim", "sugestoes": _sugestoes_chat(c), "finops": obs.custo_da_jornada(jornada),
+                 "estado": {k: estado.get(k) for k in ("alucinacao_numerica", "bloqueios_consentimento", "vulneravel", "pii_redigida")},
+                 "acordo": c.estado.get("acordo")})
+
+
+@app.post("/chat/confirmar")
+async def chat_confirmar(body: ConfirmarIn):
+    """HITL: a cliente confirmou (ou recusou) no app -> o ADK retoma a tool pausada com a decisão humana."""
+    s = await _sessao(body.cliente_id, body.sessao_id)
+    ja_vistos = len(s.state.get("ui", []))
+    bloqueios_antes = len(s.state.get("bloqueios_guardrail") or [])
+    conteudo = types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
+        id=body.request_id, name="adk_request_confirmation",
+        response={"confirmed": body.confirmed, "payload": {"frase_cliente": body.frase, "canal": "app"}}))])
+    obs.registrar_metrica("zera.hitl_resposta", 1, {"confirmed": str(body.confirmed)})
+    resultado = await _rodar_agente(body.cliente_id, body.sessao_id, "", "chat_confirmar", conteudo=conteudo)
+    if not resultado["texto"] and not body.confirmed:
+        resultado["texto"] = "Tudo bem, nada foi contratado. Quer ver outra opção ou tirar alguma dúvida?"
+    return await _resposta_chat(body.cliente_id, body.sessao_id, resultado, ja_vistos, bloqueios_antes)
 
 
 @app.post("/simular_tempo")
@@ -338,9 +540,9 @@ async def explicar(cliente_id: str, body: ExplicarIn):
                 f"parcela {rc['parcela_mensal']:.2f} por mês, prazo {rc['prazo_meses']} meses, total {rc['total_a_pagar']:.2f} "
                 f"(saldo {rc['saldo_original']:.2f} + juros {rc['juros_acordo']:.2f}), hoje pago {hoje['pagamento_mensal']:.2f} por mês em "
                 f"{hoje['qtd_pagamentos']} pagamentos, libera {rc['liberado_por_mes']:.2f} por mês; ações: " + "; ".join(a["descricao"] for a in cen["acoes"]))
-    texto = await _rodar_agente(cliente_id, body.sessao_id, pergunta, "explicar",
-                                state_delta={"ultimos_numeros": rc["numeros_permitidos"] + hoje["numeros_permitidos"]})
-    return {"texto": texto}
+    r = await _rodar_agente(cliente_id, body.sessao_id, pergunta, "explicar",
+                            state_delta={"ultimos_numeros": rc["numeros_permitidos"] + hoje["numeros_permitidos"]})
+    return {"texto": r["texto"]}
 
 
 # ======================================================================
@@ -364,7 +566,8 @@ class EventoIn(BaseModel):
 def _explicador(cliente_id: str, sessao_id: str):
     """LLM (ADK + Gemini) com os guardrails de entrada/saída; os números permitidos vêm do orquestrador."""
     async def explicar(pergunta: str, numeros_permitidos: list[float]) -> str:
-        return await _rodar_agente(cliente_id, sessao_id, pergunta, "experiencia", state_delta={"ultimos_numeros": sorted(set(numeros_permitidos))})
+        r = await _rodar_agente(cliente_id, sessao_id, pergunta, "experiencia", state_delta={"ultimos_numeros": sorted(set(numeros_permitidos))})
+        return r["texto"]
     return explicar
 
 

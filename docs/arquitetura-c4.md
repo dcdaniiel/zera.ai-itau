@@ -117,8 +117,8 @@ C4Component
     Component(exp, "experiencia.py", "Experiencia", "Estados IDLE→…→COMPLETED | NO_SUITABLE_OPTION | ERROR; 19 ações; roteamento de intenção (regex pt-BR sem acento) antes do LLM; proatividade com 7 checks; contrato {state, response_type, content, options, quick_replies, allowed_actions, requires_confirmation, context, finops}.")
     Component(ctx, "contexto.py", "Contexto", "Perfil (loader), capacidade, estado (JSON | BigQuery append-only), compromissos e renda informados, roteiro do relógio (13º em dez/26, IRPF em mai/27), gatilhos.")
     Component(agent, "agent.py", "LlmAgent", "root 'zera' (Gemini 3.8 Flash, temperatura 0,2) · ZERA_MULTIAGENTE=1: sub-agentes diagnóstico/negociador/acompanhamento.")
-    Component(tools, "tools.py", "14 function tools", "get_perfil_financeiro · calcular_capacidade · priorizar_dividas · montar_cenarios · simular_planos · comparar_com_padrao · registrar_consentimento · revogar_consentimento · fechar_acordo · status_acordo · acionar_respiro · amortizar · listar_gatilhos · escalar_humano.")
-    Component(gr, "guardrails.py", "4 callbacks", "before_model: Model Armor + injeção/jailbreak, engenharia social, fora de escopo (resposta fixa, modelo não chamado), PII redigida, vulnerabilidade, contexto. before_tool: consentimento por ação (uso único). after_tool: números permitidos. after_model: pressão, promessa, vazamento, PII, números fora das tools → [valor a confirmar].")
+    Component(tools, "tools.py", "14 function tools", "get_perfil_financeiro · calcular_capacidade · priorizar_dividas · montar_cenarios · simular_planos · comparar_com_padrao · registrar_consentimento · revogar_consentimento · fechar_acordo · status_acordo · acionar_respiro · amortizar · listar_gatilhos · escalar_humano. HITL nativo: fechar_acordo, acionar_respiro e amortizar(aplicar) são FunctionTool(require_confirmation) — o ADK pausa e só executa com a confirmação humana (canal hitl_app registrado no consentimento).")
+    Component(gr, "guardrails.py", "4 callbacks", "before_model: Model Armor + injeção/jailbreak, engenharia social, fora de escopo (resposta fixa, modelo não chamado), PII redigida, vulnerabilidade, contexto. before_tool: exigir_consentimento (recusa humana → tool não roda, bloqueios_consentimento++). after_tool: números permitidos. after_model: pressão, promessa, vazamento, PII, números fora das tools → [valor a confirmar].")
     Component(obsv, "observabilidade.py", "medir · registrar_metrica · registrar_llm · resumo", "OTel via ADK (telemetry.googleapis.com) ou OTLP genérico; logs JSON com trace id; histogramas p50/p95; custo por chamada/jornada; lote para zera.telemetria.")
     Component(pr, "prompts.py", "instruções", "Regras invioláveis: números só das tools; parcela ≤ máxima; confirmação explícita; sem cobrança; escalar em vulnerabilidade.")
   }
@@ -149,7 +149,9 @@ C4Component
 | `GET/POST /v1/clientes/{id}/preferencias` | consentimento (proatividade, Open Finance) | não |
 | `GET /v1/clientes/{id}/proativa` | PROACTIVE_MESSAGE ou `{silent, checks, reason}` | não |
 | `GET /v1/clientes/{id}/experiencia` · `POST …/experiencia/evento` | resposta atual · ação → resposta estruturada | só ASK_WHY/ASK_QUESTION |
-| `POST /chat` | conversa livre com o agente ADK (tools + consentimento) | sim |
+| `GET /chat/inicio` | abertura determinística da conversa: contexto (gatilho, renda desconhecida, acordo ativo), 3 proteções e sugestões (direcionamento) | não |
+| `POST /chat` · `POST /chat/stream` | conversa com o agente ADK; o stream é NDJSON com um evento por linha: `llm` (tokens/custo) · `tool_call` · `tool_result` · `card` (raio_x, capacidade, prioridades, cenarios, planos, acordo, amortizacao) · `texto` · `hitl` · `guardrail` · `fim` (sugestões, FinOps, acordo) | sim |
+| `POST /chat/confirmar` · `POST /chat/confirmar/stream` | HITL: devolve ao ADK a decisão humana (`request_id`, `confirmed`, `frase`) como `FunctionResponse(adk_request_confirmation)` → a tool pausada executa (ou é recusada) | sim |
 | `POST /simular_tempo` · `GET /gatilhos/{id}` · `POST /reset/{id}` | relógio da demo · gatilhos · reset (LGPD) | não |
 
 ### 3e. UI (`ui/src`)
@@ -158,8 +160,9 @@ C4Component
 |---|---|---|
 | `Perfis.tsx` | `GET /v1/clientes` | lista do cluster-alvo (medoide destacado), fonte e rótulos |
 | `Onboarding.tsx` | preferências → `POST /preferencias` | "Conheça a zera.ai" + toggles (proactive_permission, Open Finance) |
-| `Home.tsx` | `GET /proativa` | home do Itaú, balão no botão flutuante (faísca), silêncio explicado |
-| `Experiencia.tsx` | SUMMARY · QUESTION · STATUS · OPTION_DETAIL · OPTIONS_COMPARISON · TEXT · TERMS_REVIEW · CONFIRMATION_REQUEST · SUCCESS · ERROR | 10 telas + acompanhamento do acordo + quick replies + histórico da conversa + FinOps |
+| `Home.tsx` | `GET /proativa` | home do Itaú, balão no botão flutuante (faísca), silêncio explicado. Balão presente → toque abre a experiência guiada; sem balão → o botão abre a conversa com o agente |
+| `Experiencia.tsx` | SUMMARY · QUESTION · STATUS · OPTION_DETAIL · OPTIONS_COMPARISON · TEXT · TERMS_REVIEW · CONFIRMATION_REQUEST · SUCCESS · ERROR | 10 telas + acompanhamento do acordo + quick replies + histórico da conversa + FinOps; link "Conversar" para o chat |
+| `Chat.tsx` | `GET /chat/inicio` · `POST /chat/stream` · `POST /chat/confirmar/stream` | conversa com o agente em tempo real: chips de tool (ex.: "calculando capacidade"), cards do motor (raio-X, capacidade, prioridades, cenários com "Quero esta", planos, acordo), **card HITL** ("Contratar o acordo": opção, parcela, prazo, total, saldo devedor, juros → Confirmar / Agora não), selo de guardrail, caixa de proteções, sugestões de próximo passo, chip FinOps (tokens/custo do turno) |
 
 ## 4. Nível 4 — Código: máquina de estados e contrato
 
@@ -202,12 +205,17 @@ flowchart LR
   subgraph exp["Experiência (determinística)"]
     E[Experiencia.evento] -->|ASK_WHY / ASK_QUESTION| X[explicador]
   end
+  subgraph chat["Conversa (Chat.tsx)"]
+    U[cliente digita / toca] -->|POST /chat/stream| S[api._stream_chat<br/>NDJSON: llm · tool_call · tool_result · card · texto · hitl · guardrail · fim]
+    H[card HITL no app<br/>Confirmar / Agora não] -->|POST /chat/confirmar/stream<br/>FunctionResponse adk_request_confirmation| S
+  end
   X -->|Runner.run_async · state_delta ultimos_numeros| R((Runner ADK))
+  S --> R
   R --> A[LlmAgent zera<br/>Gemini 3.8 Flash · temp 0,2]
   A -.->|ZERA_MULTIAGENTE=1| D[diagnostico] & N[negociador] & C[acompanhamento]
   subgraph cb["Callbacks (guardrails RAI)"]
     B1[before_model: guardrail_entrada<br/>Model Armor · injeção · eng. social · escopo · PII · vulnerabilidade · contexto]
-    B2[before_tool: exigir_consentimento]
+    B2[before_tool: exigir_consentimento<br/>recusa humana → tool não roda]
     B3[after_tool: registrar_numeros]
     B4[after_model: guardrail_saida<br/>pressão · promessa · vazamento · PII · números ∉ tools]
   end
@@ -215,14 +223,28 @@ flowchart LR
   subgraph tools["Function tools (motor/, zero LLM)"]
     T1[get_perfil_financeiro] --- T2[calcular_capacidade] --- T3[priorizar_dividas]
     T4[montar_cenarios] --- T5[simular_planos] --- T6[comparar_com_padrao]
-    T7[registrar_consentimento] --- T8[fechar_acordo] --- T9[status_acordo]
-    T10[acionar_respiro] --- T11[amortizar] --- T12[listar_gatilhos]
+    T7[registrar_consentimento] --- T8[[fechar_acordo ✋]] --- T9[status_acordo]
+    T10[[acionar_respiro ✋]] --- T11[[amortizar aplicar ✋]] --- T12[listar_gatilhos]
     T13[escalar_humano] --- T14[revogar_consentimento]
   end
   A --> tools
+  T8 & T10 & T11 -->|require_confirmation → evento adk_request_confirmation<br/>invocação pausa| H
   R -->|usage_metadata| F[observabilidade.registrar_llm<br/>tokens · custo · jornada]
   R -->|spans invocation/agent/call_llm/execute_tool| O[(Telemetry API → Cloud Trace)]
 ```
+
+**HITL nativo do ADK (✋)**: as três tools com efeito são `FunctionTool(func, require_confirmation=True)` (`amortizar` só quando
+`aplicar=True`). Quando o modelo decide chamá-las, o ADK **não executa**: emite a function call `adk_request_confirmation`
+(`originalFunctionCall{id,name,args}`) e encerra a invocação. A API transforma isso no card HITL com os números do motor (cenário/plano
+guardado na sessão, nunca o texto do modelo) e o app responde em `/chat/confirmar` com `FunctionResponse(id=request_id, name=
+adk_request_confirmation, response={confirmed, payload{frase_cliente}})`; só então a tool roda, registrando o consentimento com
+`canal=hitl_app` e a frase. Recusa → `before_tool` devolve `acao_recusada` e a tool não roda (`bloqueios_consentimento++`). Métricas:
+`zera.hitl_pedido{tool}` e `zera.hitl_resposta{confirmed}`. "Sim" digitado nunca contrata — só o botão.
+
+**Interação visível e rápida**: `/chat/stream` devolve cada evento do Runner assim que acontece — o app mostra o chip da tool
+("calculando capacidade…"), o card com o resultado do motor (`state_delta.ui`), o texto final, o card HITL e o selo de guardrail, com
+tokens/custo do turno. A abertura (`/chat/inicio`) é determinística (0 tokens): contexto do gatilho, as três proteções e as sugestões
+de próximo passo (direcionamento do produto).
 
 Sessões: `InMemorySessionService` (1 worker) ou `VertexAiSessionService` (Agent Engine, `ZERA_SESSOES=vertex`). Memória de longo prazo
 (Agent Engine Memory Bank) é P1. O agente é o mesmo no `adk web`, no `/chat` e no explicador da experiência.
@@ -300,6 +322,7 @@ Runbook: `infra/deploy_app.sh` (build+deploy+IAM) → `curl $URL/ready` → `inf
 | Motor | spans `motor.montar_cenarios`, `motor.criar_acordo` + latência | Cloud Trace · `/metrics` | custo zero de tokens; latência de cálculo (~1 ms) |
 | Agente (ADK) | spans `invocation`, `agent_run`, `call_llm` (tokens), `execute_tool`; `zera.llm.*`; log `chamada_llm` | Cloud Trace · Monitoring · `zera.telemetria` | tokens, latência e custo por chamada; taxa de bloqueio dos guardrails (`zera.guardrail_bloqueio{camada,tipo}`) |
 | Guardrails | evento `guardrail_bloqueio`, contadores `alucinacao_numerica`, `pii_redigida`, `bloqueios_consentimento` (session state) | `zera.eventos` · Logs | item 24: números divergentes, respostas sem respaldo, violações de tom |
+| HITL (conversa) | `zera.hitl_pedido{tool}`, `zera.hitl_resposta{confirmed}`; consentimento com `canal=hitl_app` + frase no estado do cliente | Monitoring · `zera.estado_cliente` | taxa de confirmação por ação; nenhuma ação com efeito sem par pedido→resposta |
 | Dados | `dados.listar_clientes.latencia_ms`, `/ready` | Monitoring | readiness real (a fonte responde) |
 | FinOps | `custo_usd = tokens × preço/1M` por chamada; `custo_da_jornada(jornada_id)`; `/metrics.finops` (custo médio por acordo/jornada); orçamento de billing 50/90/100% | `/metrics` · `zera.telemetria` · Billing Budgets | custo por jornada concluída (item 25); o LLM entra em 2 das 10 telas |
 
@@ -311,7 +334,7 @@ cada pergunta livre ≈ 1 chamada (~1,2k/120). Com preços de referência da cla
 ## 9. Segurança e RAI
 
 - **Entrada → modelo → saída** (workshop RAI): `guardrails.py` + Model Armor (`ZERA_MODEL_ARMOR=1`, template criado em `infra/setup_gcp.sh`). Golden set de ataques em `tests/test_guardrails_ataques.py`.
-- **Consentimento**: preferências explícitas; `registrar_consentimento` de uso único por ação sensível; `CONFIRM` é a única ação que contrata; "sim" digitado não contrata.
+- **Consentimento**: preferências explícitas; na experiência guiada `CONFIRM` é a única ação que contrata; na conversa, as tools com efeito exigem a confirmação humana nativa do ADK (`require_confirmation` → card no app → `/chat/confirmar`), registrada com `canal=hitl_app` e a frase da cliente; "sim" digitado não contrata.
 - **Dados**: contexto mínimo (agregados, nunca o extrato bruto no prompt), PII redigida na entrada e na saída, identidades fictícias, `revogar_consentimento` (LGPD), estado append-only com `apagado=true`.
 - **IAM**: service account dedicada `zera-run` com papéis mínimos (Vertex user, BigQuery dataEditor/jobUser, logging/monitoring/trace writers, Model Armor user). Segredos de terceiros só no Secret Manager.
 - **Runtime**: container sem privilégio, 1 worker, timeouts, CORS por env, docs desligados em produção (`ZERA_DOCS=0`).

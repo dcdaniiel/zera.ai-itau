@@ -12,9 +12,9 @@ Docs: [`docs/PRD-MVP.md`](docs/PRD-MVP.md) · [`docs/arquitetura-c4.md`](docs/ar
 motor/        núcleo determinístico: capacidade, priorização, cenários por prazo (entrada + consolidação), hoje×nova opção, benefícios/claims, Price, respiro, amortização, gatilhos
 dados/        loader (BigQuery | amostra real | fixture), segmentação por regras, SQL (tabelas zera.*, clusterização k-means BigQuery ML), publicar_bq.py, amostra real exportada do BQ
 zera_agent/   experiencia.py (máquina de estados + contrato estruturado + roteamento de intenção), agente ADK, tools, guardrails, contexto, observabilidade (OTel/logs/métricas/FinOps)
-api/          FastAPI: /v1/clientes (perfis do BQ), experiência (spec v1), /chat (agente), /health /ready /metrics — serve a UI buildada
-ui/           app mobile (React + Vite + Tailwind, paleta Itaú): perfis → onboarding → preferências → home (trigger) → experiência de 10 telas
-tests/        56 testes sem rede (motor, fluxo ponta a ponta, guardrails, dados); tests/fixtures = perfil sintético SÓ para testes
+api/          FastAPI: /v1/clientes (perfis do BQ), experiência (spec v1), /chat/inicio + /chat/stream + /chat/confirmar (agente ADK com HITL nativo, NDJSON), /health /ready /metrics — serve a UI buildada
+ui/           app mobile (React + Vite + Tailwind, paleta Itaú): perfis → onboarding → preferências → home (trigger) → experiência de 10 telas | conversa com o agente (cards, HITL, guardrails)
+tests/        60 testes sem rede (motor, fluxo ponta a ponta, agente com HITL, API de chat, guardrails, dados); tests/fixtures = perfil sintético SÓ para testes
 infra/        setup GCP (dados + Model Armor), deploy Cloud Run (produção), observabilidade/FinOps, Agent Engine
 ```
 
@@ -31,8 +31,8 @@ pip install -r requirements.txt            # ou: uv sync
 cp zera_agent/env.demo zera_agent/.env     # ZERA_FONTE=amostra (roda sem credenciais) | bigquery (após publicar_bq)
 unset GOOGLE_CLOUD_LOCATION                # o ADK NÃO sobrescreve variáveis já exportadas no shell; gemini-3.x é servido em "global"
 gcloud auth application-default login      # para o Gemini responder "por que essa opção?" e as perguntas livres
-pytest -q                                  # 56 testes, sem rede
-uvicorn api.main:app --reload --port 8080  # API (+ serve ui/dist se existir)
+uv run pytest -q                           # 60 testes, sem rede (ou: pytest -q com o venv ativo)
+uv run uvicorn api.main:app --reload --port 8080   # API (+ serve ui/dist se existir)
 cd ui && npm install && npm run dev        # http://localhost:5173 — /api vai para :8080
 ```
 
@@ -40,6 +40,14 @@ Demo local: `http://localhost:5173` → escolha um perfil (amostra real) → onb
 proatividade) → home com o balão "Diminua suas parcelas" no botão flutuante (só se todas as pré-condições passarem) → experiência.
 Botão azul (frasco) = controles da demo (trocar perfil, avançar o relógio para dez/26 — 13º entra — ou jan/27 — mês fraco —, reiniciar)
 e o painel FinOps (chamadas, tokens e custo estimado do LLM).
+
+**Conversa com o agente (ADK + HITL):** sem balão na home (cliente sem gatilho, ou balão dispensado), o botão flutuante abre a conversa;
+na experiência guiada, o link "Conversar" faz o mesmo. A abertura é determinística (contexto + 3 proteções + sugestões de próximo passo);
+cada mensagem vai para o agente ADK via `/chat/stream` e a tela mostra, conforme acontecem, os chips de tool, os cards do motor
+(raio-X, capacidade, prioridades, cenários com "Quero esta", planos, acordo), o texto, o selo de guardrail e o custo do turno.
+Contratar/respiro/amortizar disparam o **card HITL** (`adk_request_confirmation`): a tool só executa depois de "Confirmar" no app
+(`/chat/confirmar`), com o consentimento registrado (`canal=hitl_app` + frase). A conversa exige `gcloud auth application-default login`
+(Gemini via Vertex AI); a experiência guiada roda sem LLM.
 
 Sem `gcloud auth application-default login` tudo funciona menos o LLM: "por que" cai nos critérios determinísticos e as perguntas
 livres recebem orientação com ações — nunca um beco sem saída.

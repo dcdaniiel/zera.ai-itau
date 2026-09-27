@@ -5,9 +5,9 @@ import { BottomNav, FabZera, HeaderItau, Tile } from '../components/ui'
 /* Tela do trigger — home do banco (design de referência) com o balão proativo da zera.ai ancorado no botão flutuante.
    O balão só aparece se a API devolveu PROACTIVE_MESSAGE (permissão ∧ gatilho ∧ oportunidade ∧ benefício validado);
    o botão flutuante fica sempre disponível: recusar a proatividade não impede pedir ajuda (quadro item 18). */
-export function Home({ nome, proativa, acordo, erro, onAbrir, onDispensar, onRecarregar }: {
+export function Home({ nome, proativa, acordo, erro, onAbrir, onAbrirBotao, onDispensar, onRecarregar }: {
   nome: string; proativa: Resposta | null | undefined; acordo: any | null; erro: string | null
-  onAbrir: () => void; onDispensar: () => void; onRecarregar: () => void
+  onAbrir: () => void; onAbrirBotao: () => void; onDispensar: () => void; onRecarregar: () => void
 }) {
   const carregando = proativa === undefined
   const mostrar = !!proativa && !proativa.silent && proativa.response_type === 'PROACTIVE_MESSAGE'
@@ -48,7 +48,7 @@ export function Home({ nome, proativa, acordo, erro, onAbrir, onDispensar, onRec
         )}
         <div className="h-16" />
       </div>
-      <FabZera onClick={onAbrir} balao={mostrar ? { titulo: proativa!.content.title, descricao: proativa!.content.description, cta: proativa!.cta ?? 'Ver', onCta: onAbrir, onFechar: onDispensar } : undefined} />
+      <FabZera onClick={onAbrirBotao} balao={mostrar ? { titulo: proativa!.content.title, descricao: proativa!.content.description, cta: proativa!.cta ?? 'Ver', onCta: onAbrir, onFechar: onDispensar } : undefined} />
       <BottomNav />
     </div>
   )

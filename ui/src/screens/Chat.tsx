@@ -1,0 +1,183 @@
+/* Conversa com o agente ADK — mostra a interação com a persona conforme os eventos do ADK chegam (NDJSON):
+   cada tool chamada vira um chip, cada resultado vira um card do motor (raio-x, capacidade, prioridades, cenários,
+   acordo, amortização), o texto do agente vem por último e as ações com efeito param no card de confirmação (HITL nativo:
+   adk_request_confirmation) — a cliente decide no botão. Guardrails aparecem como selo quando bloqueiam. */
+
+import { ArrowUp, Check, ChevronRight, ShieldCheck, Wrench, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { api } from '../api'
+import { Faisca, dataBR } from '../components/ui'
+import type { CardChat, EventoChat, Hitl } from '../types'
+
+const brl = (v: number) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+const brl0 = (v: number) => Number(v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
+const pct = (v: number) => `${(Number(v ?? 0) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`
+const ROTULO_TOOL: Record<string, string> = {
+  get_perfil_financeiro: 'lendo seu extrato', priorizar_dividas: 'priorizando dívidas', calcular_capacidade: 'calculando o que cabe',
+  montar_cenarios: 'montando cenários', simular_planos: 'simulando planos', comparar_com_padrao: 'comparando com o padrão',
+  fechar_acordo: 'contratando o acordo', status_acordo: 'consultando o acordo', acionar_respiro: 'acionando o respiro',
+  amortizar: 'simulando amortização', listar_gatilhos: 'verificando avisos', escalar_humano: 'chamando uma pessoa',
+  registrar_consentimento: 'registrando consentimento', revogar_consentimento: 'apagando seus dados',
+}
+
+type Item =
+  | { k: 'cliente'; texto: string }
+  | { k: 'zera'; texto: string; llm?: boolean }
+  | { k: 'tools'; chips: Array<{ nome: string; ok?: boolean }> }
+  | { k: 'card'; bloco: CardChat }
+  | { k: 'hitl'; hitl: Hitl; resolvido?: 'sim' | 'nao' }
+  | { k: 'guardrail'; camada: string; tipo: string }
+  | { k: 'sistema'; texto: string }
+
+/* ---------- cards do motor ---------- */
+function Card({ bloco, onEnviar }: { bloco: CardChat; onEnviar: (t: string) => void }) {
+  const d = bloco.dados ?? {}
+  const Linha = ({ k, v }: { k: string; v: string }) => <div className="flex items-center justify-between py-1.5 text-[13px] border-b border-line/60 last:border-0"><span className="text-ink-soft">{k}</span><span className="font-semibold text-right">{v}</span></div>
+  const Titulo = ({ t }: { t: string }) => <div className="text-[12px] font-bold uppercase tracking-wide text-itau-orange mb-1">{t}</div>
+  switch (bloco.tipo) {
+    case 'raio_x':
+      return (
+        <div className="card p-3"><Titulo t="Raio-X das dívidas" />
+          {(d.dividas ?? []).map((x: any) => <Linha key={x.divida_id} k={`${x.produto?.replace('_', ' ')} · ${pct(x.taxa_mensal)} a.m.`} v={`${brl0(x.saldo)} (${brl0(x.custo_mensal)}/mês de juros)`} />)}
+          <Linha k="Total devido" v={brl0(d.total_dividas)} /><Linha k="Cresce por mês" v={brl0(d.custo_total_mensal)} />
+          {d.renda_mediana > 0 && <Linha k="Renda típica" v={`${brl0(d.renda_mediana)}/mês`} />}
+        </div>)
+    case 'capacidade':
+      return (
+        <div className="card p-3"><Titulo t="O que cabe no seu mês" />
+          <div className="text-[24px] font-extrabold leading-tight">{brl0(d.parcela_maxima)}<span className="text-sm font-medium text-ink-soft">/mês no máximo</span></div>
+          <Linha k="Sobra num mês apertado (P25)" v={brl0(d.sobra_p25)} /><Linha k="Colchão para imprevistos" v={brl0(d.colchao)} />
+          <Linha k="Meses fracos" v={(d.meses_fracos ?? []).join(', ') || '—'} /><Linha k="Respiros por ano" v={String(d.respiros_ano ?? 0)} />
+        </div>)
+    case 'prioridades':
+      return (
+        <div className="card p-3"><Titulo t="Ordem de ataque" />
+          {(d.ordem ?? []).map((o: any) => <div key={o.divida_id} className="flex gap-2 py-1.5 text-[13px] border-b border-line/60 last:border-0"><span className="h-5 w-5 shrink-0 rounded-full bg-itau-orange-soft text-itau-orange grid place-items-center text-[11px] font-bold">{o.prioridade}</span><span><b>{o.nome}</b> — {o.motivo}</span></div>)}
+        </div>)
+    case 'cenarios':
+      if (d.nenhum_cenario_cabe) return <div className="card p-3 text-[13px]"><Titulo t="Nenhum cenário cabe" />{d.motivo}</div>
+      return (
+        <div className="card p-3"><Titulo t="Cenários que cabem" />
+          <div className="space-y-2">{(d.cenarios ?? []).map((c: any) => (
+            <div key={c.id} className={`rounded-2xl border p-3 ${(c.rotulos ?? []).includes('recomendado') ? 'border-itau-orange bg-itau-orange-soft/40' : 'border-line'}`}>
+              <div className="flex items-center justify-between"><span className="text-[12px] font-bold">{c.id} · {(c.rotulos ?? []).join(', ').replace(/_/g, ' ')}</span><span className="text-[18px] font-extrabold">{brl(c.comprometimento_mensal)}<span className="text-[11px] font-medium text-ink-soft">/mês</span></span></div>
+              <div className="text-[12px] text-ink-soft">{c.prazo_meses} meses · total {brl0(c.custo_total)} = saldo {brl0(c.saldo_original)} + juros {brl0(c.juros_acordo)}{c.entrada > 0 ? ` · entrada ${brl0(c.entrada)}` : ''}</div>
+              <button onClick={() => onEnviar(`quero fechar o cenário ${c.id}`)} className="mt-2 inline-flex items-center gap-1 text-[13px] font-bold text-itau-orange">Quero esta <ChevronRight className="h-4 w-4" /></button>
+            </div>))}</div>
+        </div>)
+    case 'planos':
+      return (
+        <div className="card p-3"><Titulo t="Planos" />
+          {(d.planos ?? []).map((p: any) => <Linha key={p.id} k={`${p.id} · ${p.nome}${p.cabe ? '' : ' (não cabe)'}`} v={p.prazo > 1 ? `${p.prazo}x ${brl(p.parcela)}` : brl0(p.total_pago)} />)}
+        </div>)
+    case 'acordo':
+      return (
+        <div className="card p-3 border-ok"><Titulo t="Seu acordo" />
+          <div className="text-[24px] font-extrabold leading-tight">{brl(d.parcela)}<span className="text-sm font-medium text-ink-soft">/mês</span></div>
+          <Linha k="Status" v={String(d.status)} /><Linha k="Parcelas" v={`${d.pagas ?? 0} pagas de ${d.prazo}`} />
+          {d.proximo_vencimento && <Linha k="Próximo vencimento" v={dataBR(d.proximo_vencimento)} />}<Linha k="Saldo devedor" v={brl0(d.saldo_devedor)} />
+          <Linha k="Respiros" v={`${d.respiros_usados ?? 0} de ${d.respiros_max ?? 0} usados`} />
+        </div>)
+    case 'amortizacao':
+      return (
+        <div className="card p-3"><Titulo t="Amortização" />
+          <Linha k="Valor recebido" v={brl0(d.valor_recebido)} /><Linha k="Reserva sugerida" v={brl0(d.reserva_sugerida)} /><Linha k="Abate do saldo" v={brl0(d.abatimento_no_saldo)} />
+          <Linha k="Parcelas a menos" v={String(d.parcelas_a_menos ?? 0)} />
+        </div>)
+    default:
+      return <div className="card p-3 text-[13px]"><Titulo t={bloco.tipo} />{d.explicacao ?? JSON.stringify(d).slice(0, 200)}</div>
+  }
+}
+
+function CardHitl({ hitl, resolvido, onDecidir }: { hitl: Hitl; resolvido?: 'sim' | 'nao'; onDecidir: (ok: boolean) => void }) {
+  return (
+    <div className="rounded-3xl border-2 border-itau-orange bg-white p-4 shadow-[0_8px_24px_rgba(236,112,0,0.15)]">
+      <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide text-itau-orange"><ShieldCheck className="h-4 w-4" /> Confirmação necessária</div>
+      <div className="mt-1 text-[17px] font-extrabold">{hitl.titulo}</div>
+      {hitl.resumo && <div className="mt-1 text-[12px] text-ink-soft">{hitl.resumo}</div>}
+      <div className="mt-2">{hitl.detalhes.map((d) => <div key={d.k} className="flex items-center justify-between py-1.5 text-[13px] border-b border-line/60 last:border-0"><span className="text-ink-soft">{d.k}</span><span className="font-semibold">{d.v}</span></div>)}</div>
+      <div className="mt-2 text-[11px] text-ink-soft">O agente pausou: nada é executado sem a sua confirmação aqui. Esta decisão fica registrada com data e hora.</div>
+      {resolvido ? <div className={`mt-3 chip ${resolvido === 'sim' ? 'bg-ok-soft text-ok' : 'bg-mist text-ink-soft'}`}>{resolvido === 'sim' ? <><Check className="h-3 w-3" /> Confirmado</> : <><X className="h-3 w-3" /> Não confirmado</>}</div> : (
+        <div className="mt-3 flex gap-2">
+          <button onClick={() => onDecidir(true)} className="btn-primary flex-1 py-3 rounded-full">{hitl.frase_sugerida}</button>
+          <button onClick={() => onDecidir(false)} className="btn-ghost py-3 rounded-full">Agora não</button>
+        </div>)}
+    </div>
+  )
+}
+
+/* ---------- tela ---------- */
+export function Chat({ nome, onSair, onAbrirExperiencia }: { nome: string; onSair: () => void; onAbrirExperiencia: () => void }) {
+  const [itens, setItens] = useState<Item[]>([])
+  const [sugestoes, setSugestoes] = useState<string[]>([])
+  const [protecoes, setProtecoes] = useState<string[]>([])
+  const [texto, setTexto] = useState('')
+  const [ocupado, setOcupado] = useState(false)
+  const [finops, setFinops] = useState<{ chamadas: number; tokens: number; custo: number }>({ chamadas: 0, tokens: 0, custo: 0 })
+  const sessao = useRef(`chat-${Math.random().toString(36).slice(2, 8)}`)
+  const fim = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    api.chatInicio(sessao.current).then((r) => { setItens([{ k: 'zera', texto: r.texto }]); setSugestoes(r.sugestoes); setProtecoes(r.protecoes) })
+      .catch((e) => setItens([{ k: 'sistema', texto: e instanceof Error ? e.message : 'API indisponível' }]))
+  }, [])
+  useEffect(() => { fim.current?.scrollIntoView({ behavior: 'smooth' }) }, [itens, ocupado])
+
+  const push = (it: Item) => setItens((l) => [...l, it])
+  function tratar(e: EventoChat) {
+    if (e.tipo === 'tool_call') setItens((l) => { const u = l[l.length - 1]; const chip = { nome: e.nome }; return u?.k === 'tools' ? [...l.slice(0, -1), { k: 'tools', chips: [...u.chips, chip] }] : [...l, { k: 'tools', chips: [chip] }] })
+    else if (e.tipo === 'tool_result') setItens((l) => l.map((it) => it.k === 'tools' ? { ...it, chips: it.chips.map((c) => c.nome === e.nome && c.ok === undefined ? { ...c, ok: e.ok } : c) } : it))
+    else if (e.tipo === 'card') push({ k: 'card', bloco: e.bloco })
+    else if (e.tipo === 'texto') push({ k: 'zera', texto: e.texto, llm: true })
+    else if (e.tipo === 'hitl') push({ k: 'hitl', hitl: e.hitl })
+    else if (e.tipo === 'guardrail') push({ k: 'guardrail', camada: e.guardrail.camada, tipo: e.guardrail.tipo })
+    else if (e.tipo === 'erro') push({ k: 'sistema', texto: e.texto })
+    else if (e.tipo === 'llm') setFinops((f) => ({ chamadas: f.chamadas + 1, tokens: f.tokens + e.tokens_entrada + e.tokens_saida, custo: f.custo + e.custo_usd }))
+    else if (e.tipo === 'fim') setSugestoes(e.sugestoes)
+  }
+  async function enviar(msg: string) {
+    if (ocupado || !msg.trim()) return
+    push({ k: 'cliente', texto: msg }); setTexto(''); setOcupado(true)
+    try { await api.chatStream(sessao.current, msg, tratar) } catch (e) { push({ k: 'sistema', texto: e instanceof Error ? e.message : 'falha' }) } finally { setOcupado(false) }
+  }
+  async function decidir(idx: number, hitl: Hitl, ok: boolean) {
+    if (ocupado) return
+    setItens((l) => l.map((it, i) => i === idx && it.k === 'hitl' ? { ...it, resolvido: ok ? 'sim' : 'nao' } : it)); setOcupado(true)
+    try { await api.chatConfirmar(sessao.current, hitl.request_id, ok, ok ? hitl.frase_sugerida : 'Não confirmo', tratar) } catch (e) { push({ k: 'sistema', texto: e instanceof Error ? e.message : 'falha' }) } finally { setOcupado(false) }
+  }
+  const temHitlPendente = itens.some((it) => it.k === 'hitl' && !it.resolvido)
+
+  return (
+    <div className="h-full flex flex-col bg-[#FBF6F1] relative">
+      <div className="flex items-center justify-between px-4 pt-4 pb-2">
+        <button onClick={onSair} aria-label="Fechar" className="h-10 w-10 -ml-2 grid place-items-center rounded-full active:bg-black/5"><X /></button>
+        <span className="flex items-center gap-2 text-[15px] font-semibold text-ink-soft"><Faisca className="h-5 w-5" /> zera.ai · conversa</span>
+        <button onClick={onAbrirExperiencia} className="text-[12px] font-bold text-itau-orange">Ver na tela</button>
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
+        {protecoes.length > 0 && itens.length <= 1 && (
+          <div className="rounded-2xl bg-itau-blue-soft/60 p-3 text-[12px] text-ink-soft"><div className="flex items-center gap-1 font-bold text-itau-blue"><ShieldCheck className="h-4 w-4" /> Como eu me protejo e te protejo</div><ul className="mt-1 space-y-0.5">{protecoes.map((p) => <li key={p}>· {p}</li>)}</ul></div>
+        )}
+        {itens.map((it, i) => {
+          if (it.k === 'cliente') return <div key={i} className="ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-itau-orange text-white px-3 py-2 text-[14px]">{it.texto}</div>
+          if (it.k === 'zera') return <div key={i} className="max-w-[92%] rounded-2xl rounded-bl-md bg-white border border-line px-3 py-2 text-[14px] leading-relaxed whitespace-pre-wrap">{it.texto}{it.llm && <div className="mt-1 text-[10px] text-ink-soft">Gemini · números conferidos com o motor pelos guardrails</div>}</div>
+          if (it.k === 'tools') return <div key={i} className="flex flex-wrap gap-1.5">{it.chips.map((c, j) => <span key={j} className={`chip text-[11px] ${c.ok === false ? 'bg-danger-soft text-danger' : c.ok ? 'bg-ok-soft text-ok' : 'bg-mist text-ink-soft'}`}><Wrench className="h-3 w-3" /> {ROTULO_TOOL[c.nome] ?? c.nome}{c.ok === undefined ? '…' : c.ok ? ' ✓' : ' ✗'}</span>)}</div>
+          if (it.k === 'card') return <div key={i}><Card bloco={it.bloco} onEnviar={enviar} /></div>
+          if (it.k === 'hitl') return <div key={i}><CardHitl hitl={it.hitl} resolvido={it.resolvido} onDecidir={(ok) => decidir(i, it.hitl, ok)} /></div>
+          if (it.k === 'guardrail') return <div key={i} className="flex items-center gap-2 rounded-xl bg-itau-blue-soft px-3 py-2 text-[12px] text-itau-blue"><ShieldCheck className="h-4 w-4" /> Guardrail de {it.camada}: <b>{it.tipo.replace(/_/g, ' ')}</b>{it.camada === 'entrada' && ' · modelo não foi chamado'}</div>
+          return <div key={i} className="text-center text-[12px] text-danger">{it.texto}</div>
+        })}
+        {ocupado && <div className="flex items-center gap-2 text-[12px] text-ink-soft"><span className="h-3.5 w-3.5 rounded-full border-2 border-itau-orange border-t-transparent animate-spin" /> zera.ai está trabalhando…</div>}
+        <div ref={fim} />
+      </div>
+      <div className="px-4 pb-4 pt-1 bg-[#FBF6F1]">
+        {!ocupado && !temHitlPendente && sugestoes.length > 0 && <div className="mb-2 flex gap-2 overflow-x-auto no-scrollbar">{sugestoes.map((s) => <button key={s} onClick={() => enviar(s)} className="chip shrink-0 border border-line bg-white text-[12px] py-2">{s}</button>)}</div>}
+        <form className="flex items-center gap-2 rounded-full bg-white border border-line px-4 py-2 shadow-sm" onSubmit={(e) => { e.preventDefault(); enviar(texto) }}>
+          <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder={temHitlPendente ? 'Responda no card acima' : `Fale com a zera.ai, ${nome.split(' ')[0]}`} disabled={ocupado || temHitlPendente} className="flex-1 bg-transparent outline-none text-[15px] py-1 disabled:opacity-50" aria-label="Mensagem" />
+          <button type="submit" disabled={!texto.trim() || ocupado || temHitlPendente} aria-label="Enviar" className="h-9 w-9 grid place-items-center rounded-full bg-itau-orange text-white disabled:opacity-40"><ArrowUp className="h-5 w-5" /></button>
+        </form>
+        <div className="mt-2 flex items-center justify-center gap-2 text-[11px] text-ink-soft"><span>Resposta gerada por IA e pode ter informações imprecisas.</span>{finops.chamadas > 0 && <span className="chip bg-mist text-ink-soft" title="FinOps desta conversa">LLM {finops.chamadas}× · {finops.tokens} tokens · US$ {finops.custo.toFixed(4)}</span>}</div>
+      </div>
+    </div>
+  )
+}

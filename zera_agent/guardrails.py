@@ -9,7 +9,7 @@
 Entrada  (before_model_callback): Model Armor (P1) + injeção de prompt/jailbreak, engenharia social
           (senha, token, transferência, dados de terceiros), fora de escopo (investimento, crédito novo),
           PII redigida, vulnerabilidade (não bloqueia: muda o tom e escala), contexto (memória, gatilhos).
-Ferramentas (before/after_tool_callback): consentimento por ação (uso único), números permitidos.
+Ferramentas (before/after_tool_callback): confirmação humana (HITL nativo do ADK) por ação com efeito, números permitidos.
 Saída    (after_model_callback): Model Armor (P1) + PII, pressão/cobrança, promessas, vazamento de prompt,
           fora de escopo, e checagem de todo R$ / % / prazo contra as tools.
 
@@ -226,17 +226,23 @@ def guardrail_entrada(callback_context: CallbackContext, llm_request: LlmRequest
 # ======================================================================
 
 def exigir_consentimento(tool: BaseTool, args: dict[str, Any], tool_context: ToolContext) -> dict | None:
+    """Ações com efeito só executam com confirmação humana.
+
+    Caminho principal (HITL nativo do ADK): a tool tem `require_confirmation`; na primeira chamada este callback deixa
+    passar e o ADK PAUSA a execução pedindo confirmação (`adk_request_confirmation`) — o app mostra o card e só então a
+    tool roda, com `tool_context.tool_confirmation.confirmed`. Recusa no app => a ação não executa e o agente é avisado.
+    """
     nome = tool.name
     if nome == "amortizar" and not args.get("aplicar"):
         return None  # simulação não precisa de consentimento
-    if nome in ACOES_COM_CONSENTIMENTO:
-        consentimentos = tool_context.state.get("consentimento") or {}
-        if not consentimentos.get(nome):
-            tool_context.state["bloqueios_consentimento"] = tool_context.state.get("bloqueios_consentimento", 0) + 1
-            return {"erro": "consentimento_ausente", "acao": nome,
-                    "instrucao": ("Antes de executar, pergunte ao cliente se ele confirma, espere a resposta, "
-                                  "chame registrar_consentimento(acao, frase_cliente) e só então chame esta ação.")}
-    return None
+    if nome not in ACOES_COM_CONSENTIMENTO:
+        return None
+    conf = getattr(tool_context, "tool_confirmation", None)
+    if conf is not None and not getattr(conf, "confirmed", False):
+        tool_context.state["bloqueios_consentimento"] = tool_context.state.get("bloqueios_consentimento", 0) + 1
+        return {"erro": "acao_recusada", "acao": nome,
+                "instrucao": "A cliente NÃO confirmou no app. Não execute; diga que nada foi feito e pergunte o que ela prefere."}
+    return None  # sem confirmação ainda: o ADK pausa e pede a confirmação humana; confirmada: executa
 
 
 def registrar_numeros(tool: BaseTool, args: dict[str, Any], tool_context: ToolContext, tool_response: dict) -> dict | None:

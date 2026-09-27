@@ -145,6 +145,14 @@ class Experiencia:
     def _nome(self) -> str:
         return (self.ctx.perfil.nome or "").split(" ")[0] or "Cliente"
 
+    def _vocativo(self, frase: str) -> str:
+        """'{nome}, ...' só quando há um nome de verdade; 'Cliente, ...' fica esquisito."""
+        nome = self._nome()
+        if nome.lower() == "cliente":
+            frase = frase.replace("{nome}, ", "")
+            return frase[:1].upper() + frase[1:]
+        return frase.format(nome=nome)
+
     def _contexto(self) -> dict:
         """O que a interface mostra como 'considerado': gasto informado, dinheiro extra, capacidade, origem dos dados."""
         p = self.ctx.perfil
@@ -219,7 +227,7 @@ class Experiencia:
             if ativa:
                 return {**ativa, "checks": checks, "repetida": True}
             titulo, desc, cta = MENSAGENS_PROATIVAS["risco_parcela"]
-            msg = _resposta("IDLE", "PROACTIVE_MESSAGE", titulo, desc.format(nome=self._nome()), cta=cta,
+            msg = _resposta("IDLE", "PROACTIVE_MESSAGE", titulo, self._vocativo(desc), cta=cta,
                             benefit={"benefit_type": "BREATHER", "respiros_restantes": gatilho.get("respiros_restantes")},
                             trigger="risco_parcela", checks=checks, allowed_actions=["START", "DISMISS"], silent=False)
             self._registrar_proativa(msg, hoje_sim, ultimos, gatilho, "BREATHER")
@@ -240,7 +248,7 @@ class Experiencia:
             return {**ativa, "benefit": principal, "checks": checks, "repetida": True}
         self.exp["hoje"] = hoje
         titulo, desc, cta = MENSAGENS_PROATIVAS.get(gatilho["tipo"], MENSAGENS_PROATIVAS["entrada_rotativo"])
-        msg = _resposta("IDLE", "PROACTIVE_MESSAGE", titulo, desc.format(nome=self._nome()), cta=cta, benefit=principal,
+        msg = _resposta("IDLE", "PROACTIVE_MESSAGE", titulo, self._vocativo(desc), cta=cta, benefit=principal,
                         trigger=gatilho["tipo"], checks=checks, allowed_actions=["START", "DISMISS"], silent=False,
                         numeros_permitidos=rec["numeros_permitidos"])
         self._registrar_proativa(msg, hoje_sim, ultimos, gatilho, principal["benefit_type"])
@@ -376,8 +384,8 @@ class Experiencia:
             desc = ("Encontrei suas dívidas, mas não identifiquei entradas de renda no seu extrato. "
                     "Antes de calcular, vou te perguntar quanto entra por mês — nada é calculado sem isso.")
         else:
-            desc = (f"{self._nome()}, quer ajuda para organizar seus próximos pagamentos? Hoje saem {brl(hoje['pagamento_mensal'])} por mês "
-                    f"em {hoje['qtd_pagamentos']} pagamentos e {brl(hoje['juros_mensais'])} são só juros. Posso buscar uma forma de reunir tudo em uma parcela que caiba no seu mês.")
+            desc = self._vocativo(f"{{nome}}, quer ajuda para organizar seus próximos pagamentos? Hoje saem {brl(hoje['pagamento_mensal'])} por mês "
+                                  f"em {hoje['qtd_pagamentos']} pagamentos e {brl(hoje['juros_mensais'])} são só juros. Posso buscar uma forma de reunir tudo em uma parcela que caiba no seu mês.")
         return _resposta(st, "SUMMARY", "Encontrei uma forma de aliviar seus pagamentos mensais.", desc,
                          summary=hoje, cta="Encontrar uma opção", allowed_actions=["START", "ASK_QUESTION", "DISMISS"],
                          quick_replies=[{"id": "START", "label": "Encontrar uma opção"},
@@ -600,7 +608,7 @@ class Experiencia:
         if intencao == "PRAZO":
             return self._pedido_de_prazo(int(extra))
         if intencao == "SAUDACAO":
-            return self._orientar(f"Oi, {self._nome()}! Estou aqui para ajudar com as suas dívidas, sem pressa e sem pressão.", motivo="saudacao")
+            return self._orientar(self._vocativo("Oi, {nome}, estou aqui para ajudar com as suas dívidas, sem pressa e sem pressão."), motivo="saudacao")
         # pergunta livre de verdade -> LLM com fatos do estado atual (atrás dos guardrails)
         resposta = ""
         if self.explicador:

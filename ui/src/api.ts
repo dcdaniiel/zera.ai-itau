@@ -1,7 +1,7 @@
 /* Cliente HTTP da API zera.ai (api/main.py). Sem mock: toda tela vem do backend (núcleo determinístico + agente + BigQuery).
    Em dev, /api é proxied pelo Vite para http://localhost:8080; em produção a própria API serve a UI (mesma origem). */
 
-import type { Acao, Clientes, EstadoDemo, Perfil, Preferencias, Resposta } from './types'
+import type { Acao, ChatInicio, Clientes, EstadoDemo, EventoChat, Perfil, Preferencias, Resposta } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? '/api' : '')
 const SESSAO_ID = `ui-${Math.random().toString(36).slice(2, 8)}`
@@ -59,4 +59,34 @@ export const api = {
   simularTempo: (ate: string) => req<EstadoDemo>('/simular_tempo', { method: 'POST', body: JSON.stringify({ cliente_id: clienteId, ate }) }),
   reset: () => req<unknown>(`/reset/${encodeURIComponent(clienteId)}`, { method: 'POST' }),
   metrics: () => req<any>('/metrics', undefined, 8_000),
+  // --- conversa com o agente ADK (tools + guardrails + HITL) ---
+  chatInicio: (sessaoId: string) => req<ChatInicio>(`/chat/inicio?cliente_id=${encodeURIComponent(clienteId)}&sessao_id=${encodeURIComponent(sessaoId)}`),
+  chatStream: (sessaoId: string, mensagem: string, onEvento: (e: EventoChat) => void) =>
+    stream('/chat/stream', { cliente_id: clienteId, sessao_id: sessaoId, mensagem }, onEvento),
+  chatConfirmar: (sessaoId: string, request_id: string, confirmed: boolean, frase: string, onEvento: (e: EventoChat) => void) =>
+    stream('/chat/confirmar/stream', { cliente_id: clienteId, sessao_id: sessaoId, request_id, confirmed, frase }, onEvento),
+}
+
+/** Lê NDJSON do backend e entrega cada evento do ADK assim que chega (tool_call, tool_result, card, texto, hitl, guardrail, fim). */
+async function stream(path: string, body: unknown, onEvento: (e: EventoChat) => void): Promise<void> {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), 120_000)
+  try {
+    const r = await fetch(`${BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal })
+    if (!r.ok || !r.body) throw new ApiError(`${r.status} ${(await r.text()).slice(0, 200)}`, r.status)
+    const reader = r.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      const linhas = buf.split('\n'); buf = linhas.pop() ?? ''
+      for (const l of linhas) if (l.trim()) onEvento(JSON.parse(l) as EventoChat)
+    }
+    if (buf.trim()) onEvento(JSON.parse(buf) as EventoChat)
+  } catch (e) {
+    if (e instanceof ApiError) throw e
+    throw new ApiError(e instanceof Error && e.name === 'AbortError' ? 'A zera.ai demorou demais para responder.' : 'Não foi possível falar com a zera.ai agora.')
+  } finally { clearTimeout(t) }
 }

@@ -3,8 +3,10 @@
 Regras:
 - Nenhuma tool chama LLM. Toda conta vem de `motor/`.
 - Toda resposta traz `numeros_permitidos` (guardrail de números) e `explicacao` (o que o agente pode citar).
-- Ações com efeito (fechar_acordo, acionar_respiro, amortizar) exigem consentimento registrado na sessão
-  — verificado pelo `before_tool_callback` em guardrails.py.
+- Ações com efeito (fechar_acordo, acionar_respiro, amortizar com aplicar=True) são tools com
+  `require_confirmation` (HITL nativo do ADK): a execução PAUSA, o app mostra o card de confirmação e a tool só roda
+  depois que a cliente toca em "Confirmar". A confirmação vira o registro de consentimento (frase + horário).
+  `registrar_consentimento` continua disponível para o agente guardar a frase dita em texto (auditoria adicional).
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from google.adk.tools import ToolContext
+from google.adk.tools import FunctionTool, ToolContext
 
 from motor import (
     acionar_respiro as _acionar_respiro,
@@ -31,6 +33,23 @@ ACOES_COM_CONSENTIMENTO = {"fechar_acordo", "acionar_respiro", "amortizar"}
 
 def _ctx(tool_context: ToolContext) -> Contexto:
     return Contexto.para(tool_context.state.get("cliente_id", "cli_001"))
+
+
+def _consentimento_hitl(tool_context: ToolContext, acao: str) -> dict:
+    """Transforma a confirmação humana (botão do app) no registro de consentimento da ação."""
+    c = _ctx(tool_context)
+    conf = getattr(tool_context, "tool_confirmation", None)
+    payload = (getattr(conf, "payload", None) or {}) if conf is not None else {}
+    frase = str((payload or {}).get("frase_cliente") or (tool_context.state.get("consentimento") or {}).get(acao, {}).get("frase_cliente") or "Confirmado pela cliente no app")
+    registro = {"consentimento_id": f"cs_{uuid4().hex[:8]}", "acao": acao, "frase_cliente": frase, "versao_termo": "demo-v1",
+                "canal": "hitl_app" if conf is not None else "texto", "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "data_simulada": c.estado["hoje"]}
+    c.estado.setdefault("consentimentos", []).append(registro)
+    return registro
+
+
+def _amortizar_precisa_confirmacao(tool_context: ToolContext, valor: float, preservar_reserva: bool = True, aplicar: bool = False) -> bool:
+    return bool(aplicar)
 
 
 def _ui(tool_context: ToolContext, tipo: str, dados: dict) -> None:
@@ -188,6 +207,7 @@ def fechar_acordo(tool_context: ToolContext, plano_id: str) -> dict:
     cenarios = tool_context.state.get("cenarios") or {}
     if pid in cenarios:
         cen = cenarios[pid]
+        _consentimento_hitl(tool_context, "fechar_acordo")
         acordo = criar_acordo_de_cenario(c.perfil, cen, c.hoje, c.politica)
         c.salvar(acordo)
         c.registrar_evento("acordo_fechado", {"cenario": pid, "parcela": acordo.parcela, "prazo": acordo.prazo,
@@ -207,6 +227,7 @@ def fechar_acordo(tool_context: ToolContext, plano_id: str) -> dict:
         return {"ok": False, "erro": f"plano/cenário {plano_id} não existe; chame montar_cenarios primeiro"}
     if not plano["cabe"]:
         return {"ok": False, "erro": "esse plano não cabe na sobra do cliente", "motivo": plano["motivo"]}
+    _consentimento_hitl(tool_context, "fechar_acordo")
     acordo = criar_acordo(c.perfil, plano, c.hoje, c.politica)
     c.salvar(acordo)
     c.registrar_evento("acordo_fechado", {"plano": pid, "parcela": acordo.parcela, "prazo": acordo.prazo})
@@ -239,6 +260,7 @@ def acionar_respiro(tool_context: ToolContext) -> dict:
     acordo = c.acordo
     if acordo is None:
         return {"ok": False, "erro": "não há acordo ativo"}
+    _consentimento_hitl(tool_context, "acionar_respiro")
     resposta = _acionar_respiro(acordo, c.hoje)
     if resposta.get("ok"):
         c.salvar(acordo)
@@ -254,6 +276,8 @@ def amortizar(tool_context: ToolContext, valor: float, preservar_reserva: bool =
     acordo = c.acordo
     if acordo is None:
         return {"ok": False, "erro": "não há acordo ativo"}
+    if aplicar:
+        _consentimento_hitl(tool_context, "amortizar")
     resposta = _amortizar(acordo, valor, c.capacidade, c.perfil, c.politica, preservar_reserva=preservar_reserva, aplicar=aplicar)
     if aplicar and resposta.get("ok"):
         c.salvar(acordo)
@@ -279,8 +303,14 @@ def escalar_humano(tool_context: ToolContext, motivo: str) -> dict:
             "explicacao": "Uma pessoa do time vai entrar em contato. Nenhuma ação é executada até lá."}
 
 
+# HITL nativo do ADK: estas tools pausam a execução até a cliente confirmar no app (adk_request_confirmation)
+fechar_acordo_tool = FunctionTool(fechar_acordo, require_confirmation=True)
+acionar_respiro_tool = FunctionTool(acionar_respiro, require_confirmation=True)
+amortizar_tool = FunctionTool(amortizar, require_confirmation=_amortizar_precisa_confirmacao)
+ROTULOS_HITL = {"fechar_acordo": "Contratar o acordo", "acionar_respiro": "Usar um respiro", "amortizar": "Amortizar com o dinheiro extra"}
+
 TOOLS_DIAGNOSTICO = [get_perfil_financeiro, calcular_capacidade, priorizar_dividas]
 TOOLS_NEGOCIADOR = [montar_cenarios, simular_planos, comparar_com_padrao]
-TOOLS_ACOMPANHAMENTO = [fechar_acordo, status_acordo, acionar_respiro, amortizar, listar_gatilhos]
+TOOLS_ACOMPANHAMENTO = [fechar_acordo_tool, status_acordo, acionar_respiro_tool, amortizar_tool, listar_gatilhos]
 TOOLS_ROOT = [registrar_consentimento, revogar_consentimento, escalar_humano]
 TODAS = TOOLS_DIAGNOSTICO + TOOLS_NEGOCIADOR + TOOLS_ACOMPANHAMENTO + TOOLS_ROOT
