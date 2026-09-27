@@ -1,103 +1,141 @@
 # zera.ai — renegociação que cabe no mês da cliente
 
-Agente do Itaú (ADK + Gemini no Vertex AI) para a **Batalha de Agentes Itaú × Google**. A cliente entra no rotativo (gatilho),
-recebe um convite discreto (se autorizou), confirma o orçamento, compara alternativas calculadas por um **motor determinístico**
-e contrata só com confirmação explícita. Princípio **"ambos ganham"**: o banco não abre mão do saldo devedor — muda a taxa
-(rotativo/cheque a 8–14% a.m. → taxa de renegociação) e o prazo (12x…60x); a parcela cai, a dívida ganha data para acabar e o
-banco recebe o saldo integral + juros do acordo.
+Agente do Itaú (Google ADK + Gemini 3.8 Flash no Vertex AI) para a **Batalha de Agentes Itaú × Google** (26–27/09/2026, projeto GCP
+`batalha-time-03-vhxk`). A cliente entra no cheque especial ou no rotativo (gatilho), recebe um convite discreto — só se autorizou —,
+vê **quanto deve e quanto cresce por mês**, compara **opções calculadas por um motor determinístico** que cabem no orçamento dela e
+**contrata só com confirmação explícita no app**. Princípio **"ambos ganham"**: o banco não abre mão do saldo devedor — muda a taxa
+(8–14% a.m. do rotativo/cheque → 1,8% a.m. de renegociação) e o prazo (12–60x); a cliente ganha parcela que cabe e data para acabar,
+o banco recebe o saldo integral mais os juros do acordo.
 
-Docs: [`docs/arquitetura-explicativa.md`](docs/arquitetura-explicativa.md) (**entregável 5**: componentes, integrações, decisões técnicas e justificativas) · [`docs/arquitetura-c4-apresentacao.html`](docs/arquitetura-c4-apresentacao.html) (C4 níveis 1 e 2 para apresentar — abra no navegador; `→`/`←` navegam) · [`docs/arquitetura-c4.md`](docs/arquitetura-c4.md) (C4 completo + ADK graph + observabilidade/FinOps + uso dos serviços GCP) · [`docs/PRD-MVP.md`](docs/PRD-MVP.md) · [`docs/estrategia-dados.md`](docs/estrategia-dados.md) · QR da demo: [`docs/qr-zera-ai.png`](docs/qr-zera-ai.png) / [`.svg`](docs/qr-zera-ai.svg)
+**Demo em produção:** `https://zera-4p3fwfvm4a-uc.a.run.app/?cliente=02123dba-723a-4b1c-81da-e6ba635672fc` (persona "Cleide";
+QR em [`docs/qr-zera-ai.png`](docs/qr-zera-ai.png)). Outros perfis reais do segmento: menu do frasco (controles da demo) → trocar perfil.
+
+## Documentação (entregáveis)
+
+| Documento | Conteúdo |
+|---|---|
+| [`docs/arquitetura-explicativa.md`](docs/arquitetura-explicativa.md) | **Item 5 da submissão**: componentes, integrações GCP, fluxos, 17 decisões de arquitetura e 16 de dados/algoritmos com justificativas, RAI, qualidade, evolução |
+| [`docs/arquitetura-c4-apresentacao.html`](docs/arquitetura-c4-apresentacao.html) | Página para apresentar: C4 níveis 1 e 2 desenhados, um turno, **diagramas de sequência**, dados e algoritmos (fórmulas, qualidade do k-means), decisões, Google Cloud. Abra no navegador; `→`/`←` navegam |
+| [`docs/arquitetura-c4.md`](docs/arquitetura-c4.md) | C4 completo (níveis 1–4, Mermaid), grafo do ADK, sequências, pipeline de dados, observabilidade/FinOps, uso de cada serviço GCP |
+| [`docs/PRD-MVP.md`](docs/PRD-MVP.md) · [`docs/quadro-produto.md`](docs/quadro-produto.md) · [`docs/estrategia-dados.md`](docs/estrategia-dados.md) | PRD, quadro único de produto (tese, outcomes, guardrails, métricas), estratégia de dados |
+| [`infra/producao.md`](infra/producao.md) | Runbook de produção: deploy, IAM do projeto do evento e contornos, smoke test, observabilidade, rollback |
+
+## Como funciona (uma olhada)
 
 ```
-motor/        núcleo determinístico: capacidade, priorização, cenários por prazo (entrada + consolidação), hoje×nova opção, benefícios/claims, Price, respiro, amortização, gatilhos
-dados/        loader (BigQuery | amostra real | fixture), segmentação por regras, SQL (tabelas zera.*, clusterização k-means BigQuery ML), publicar_bq.py, amostra real exportada do BQ
-zera_agent/   experiencia.py (máquina de estados + contrato estruturado + roteamento de intenção), agente ADK, tools, guardrails, contexto, observabilidade (OTel/logs/métricas/FinOps)
-api/          FastAPI: /v1/clientes (perfis do BQ), experiência (spec v1), /chat/inicio + /chat/stream + /chat/confirmar (agente ADK com HITL nativo, NDJSON), /health /ready /metrics — serve a UI buildada
-ui/           app mobile (React + Vite + Tailwind, paleta Itaú): perfis → onboarding → preferências → home (trigger) → experiência de 10 telas | conversa com o agente (cards, HITL, guardrails)
-tests/        87 testes sem rede (motor, fluxo ponta a ponta, agente com HITL, API de chat, guardrails, dados); tests/fixtures = perfil sintético SÓ para testes
-infra/        setup GCP (dados + Model Armor), deploy Cloud Run (produção), observabilidade/FinOps, Agent Engine
+cliente (app) ─► UI React ─► API FastAPI ─┬─► Experiência guiada (máquina de estados, 0 tokens) ──┐
+                                          ├─► Agente ADK (Gemini 3.8 Flash) ── 16 tools ─────────┼─► Motor determinístico ─► Contexto / estado
+                                          │      guardrails: entrada · tool · saída               ├─► RAG leve (política, FAQ, glossário)
+                                          └─► Rotas determinísticas (abertura, saudações, opções digitadas, botão Contratar)   │
+                                                                                     dados/loader ◄── BigQuery zera.* (k-means) | snapshot | amostra real
+observabilidade só no backend: logs JSON → Cloud Logging · /metrics · zera.telemetria (Cloud Trace bloqueado por Org Policy no projeto)
 ```
 
-**Nenhum dado é mockado.** Os perfis vêm da base do evento (`hackathon_dados.extrato_sintetico`): no GCP, pelo cluster-alvo do
-k-means (BigQuery ML → `zera.perfis_demo`); local, pela amostra real exportada do BigQuery (`dados/amostra_bq_extrato_sintetico.csv`)
-com segmentação por regras. O cliente mais típico do segmento recebe o nome da persona do produto ("Cleide"); os demais, pseudônimos
-determinísticos (identidade fictícia). Dívidas inferidas do extrato ficam rotuladas "estimado do extrato". **Renda = média mensal das
-entradas (tipo `E`) do histórico** do cliente (12 meses), com a fonte sempre exibida; quando o histórico não traz nenhuma entrada, o motor
-**não calcula** sobra/parcela/cenários (dados insuficientes): a zera.ai pergunta, a cliente informa (`informar_renda`, no chat ou na
-experiência guiada) e tudo é recalculado com o valor dito por ela — nunca inventa.
+- **O LLM nunca calcula.** Capacidade, prioridades, cenários, termos, acordo, respiro, amortização e gatilhos nascem em `motor/` (Python puro,
+  testado). O Gemini entende a intenção, conduz e explica; todo número do texto é conferido com os das tools da sessão pelo guardrail de saída —
+  número inventado nunca chega à cliente (ela recebe uma mensagem acolhedora com "falar com uma pessoa" em primeiro lugar).
+- **Só a cliente contrata.** Na experiência guiada, só a ação `CONFIRM`; na conversa, o card de confirmação (HITL nativo do ADK —
+  `FunctionTool(require_confirmation=True)` — ou o botão **Contratar** de cada opção, via determinística). "Sim" digitado nunca contrata.
+- **Nenhum dado mockado.** Perfis reais da base do evento segmentados por k-means no BigQuery ML; renda = média mensal das entradas do
+  extrato; sem renda no histórico o motor **não calcula** e a zera.ai pergunta. Dívidas inferidas do extrato ficam rotuladas "estimado do extrato".
+- **Sem beco sem saída.** Toda resposta termina com próximos passos que viram **botões**; "nenhuma opção cabe" traz diagnóstico numérico e caminhos;
+  humano é uma saída prevista (pedido, vulnerabilidade, bloqueio de guardrail).
 
-> **Amostra local:** `dados/amostra_bq_extrato_sintetico.csv` atual veio de um `LIMIT 10000` ordenado por descrição — só saídas de
-> jan/2025, sem entradas —, então todo perfil aparece com "renda não identificada" e a proatividade fica em silêncio até a renda ser
-> informada. Gere uma amostra completa (12 meses, entradas e saídas, 40 clientes do segmento) com
-> `bq query --project_id=batalha-time-03-vhxk --use_legacy_sql=false --format=csv --max_rows=2000000 < dados/sql/exportar_amostra.sql > dados/amostra_bq_extrato_sintetico.csv   # por stdin: o bq lê "-- …" do arquivo como flags se for argumento`
-> e reinicie a API. Em `ZERA_FONTE=bigquery` a renda já vem do histórico completo (`zera.perfil_cliente.renda_media`).
+## Dados e segmentação (base completa, direto do BigQuery)
+
+| | |
+|---|---|
+| Base | `hackathon_dados.extrato_sintetico`: **467.585 lançamentos**, **1.000 clientes**, **jan–dez/2025** (35.077 entradas, 432.508 saídas) |
+| Pipeline | `dados/sql/zera_tabelas.sql` (extrato particionado/clusterizado, classe por regras, features mensais, `perfil_cliente` com 12 meses em arrays, `dividas_derivadas`) → `dados/sql/clusterizacao.sql` (`features_cliente` → **k-means++ BigQuery ML**, k = 4, features padronizadas → `clusters_clientes` → `perfil_clusters` → `perfis_demo`) |
+| Segmento-alvo | cluster com maior índice de endividamento (média de z-scores): **160 clientes, 16,0% da base**; mediana de 10 meses no vermelho em 12; dívida inferida mediana R$ 9.467 (141 dos 160 no cheque especial); renda média das entradas mediana R$ 7.798/mês, regular (CV 0,175) |
+| Qualidade | `ML.EVALUATE`: Davies-Bouldin **1,569**, distância quadrática média 7,286 (k = 4). Curva por k = 2…8: `uv run python -m dados.avaliar_k` (grava `zera.kmeans_avaliacao`, `docs/davies_bouldin.svg` e injeta o gráfico na apresentação) |
+| Persona | medoide do cluster-alvo = "Cleide": renda média R$ 8.632/mês, 11 meses no vermelho, cheque especial R$ 7.537 a 8% a.m. + crediário R$ 1.568 em 4x sem juros — R$ 603/mês só de juros. Hoje a parcela máxima que cabe é R$ 177 e a menor parcela possível é R$ 249 (60x): o motor devolve o **diagnóstico** (faltam R$ 72/mês; entrada de R$ 2.639 ou R$ 96/mês a menos de gastos resolvem) — o 13º (relógio da demo → dez/26) muda o quadro. Outros perfis do segmento fecham acordo direto |
+| Ficha | `bq query --use_legacy_sql=false < dados/sql/ficha_segmento.sql` devolve todos os números da ficha "Público prioritário e persona" |
+
+Modo local sem credenciais (`ZERA_FONTE=amostra`): `dados/amostra_bq_extrato_sintetico.csv` é export real (40 clientes × 12 meses,
+`dados/sql/exportar_amostra.sql`, rode por stdin) e `dados/segmentacao.py` aplica as mesmas features com **segmentação por regras**
+(ranking pelo índice; sem fronteira de cluster). `tests/fixtures/` é sintético e **só** para testes.
+
+## Estrutura
+
+```
+motor/          capacidade (P25 da sobra − colchão 5%, × 0,75), priorização, cenários por prazo (Price 1,8% a.m.), hoje × nova opção, benefícios
+                validados, termos/CET, acordo, respiro, amortização, gatilhos, sinais de gasto invisível — Python puro, 0 LLM
+dados/          loader (bigquery | bigquery_snapshot | amostra | fixture), segmentação por regras, SQL (tabelas, k-means, amostra, ficha),
+                publicar_bq.py, exportar_snapshot_bq.py, avaliar_k.py
+zera_agent/     agent.py (LlmAgent; multiagente opcional), tools.py (16 tools; 3 com HITL nativo), prompts.py, guardrails.py (4 callbacks),
+                contexto.py (perfil + estado resiliente: BigQuery → JSON), experiencia.py (máquina de estados), observabilidade.py
+conhecimento/   RAG leve: política de renegociação, FAQ, glossário (busca lexical top-3, sanitizada) — tool consultar_conhecimento
+api/            FastAPI: /v1/clientes (perfis do BQ), experiência guiada (contrato estruturado), /chat/inicio · /chat/stream (NDJSON) ·
+                /chat/contratar · /chat/confirmar(/stream), /health /ready /metrics, /simular_tempo, /reset — serve a UI buildada
+ui/             app mobile (React 19 + Vite 8 + Tailwind 4): perfis → onboarding → preferências → home (balão) → experiência guiada | conversa
+tests/          101 testes sem rede (motor, fluxo, agente com HITL, API do chat, guardrails/ataques, dados, conhecimento, autenticação do LLM)
+infra/          deploy_app.sh, smoke_prod.sh, gemini_api_key.sh, conceder_dataset.py, observabilidade.sh, setup_gcp.sh, producao.md
+docs/           entregáveis (acima) + QR da demo
+```
 
 ## Rodar local
 
 ```bash
-pip install -r requirements.txt            # ou: uv sync
-cp zera_agent/env.demo zera_agent/.env     # lido automaticamente (adk web, uvicorn, pytest); ZERA_FONTE=amostra roda sem credenciais | bigquery (após publicar_bq)
-unset GOOGLE_CLOUD_LOCATION                # variável exportada no shell tem precedência sobre o .env (e o app avisa); gemini-3.x é servido em "global"
-gcloud auth application-default login      # para o Gemini responder "por que essa opção?" e as perguntas livres
-uv run pytest -q                           # 87 testes, sem rede (ou: pytest -q com o venv ativo)
-uv run uvicorn api.main:app --reload --port 8080   # API (+ serve ui/dist se existir)
-cd ui && npm install && npm run dev        # http://localhost:5173 — /api vai para :8080
+uv sync                                   # ou: pip install -r requirements.txt
+cp zera_agent/env.demo zera_agent/.env    # lido automaticamente (adk web, uvicorn, pytest); ZERA_FONTE=amostra roda sem credenciais
+unset GOOGLE_CLOUD_LOCATION               # variável do shell tem precedência sobre o .env; gemini-3.x é servido em "global"
+gcloud auth application-default login     # só para a conversa com o Gemini (a experiência guiada roda sem LLM)
+uv run pytest -q                          # 101 testes, sem rede
+uv run uvicorn api.main:app --reload --port 8080
+cd ui && npm install && npm run dev       # http://localhost:5173 — /api vai para :8080
 ```
 
-Demo local: `http://localhost:5173` → escolha um perfil (amostra real) → onboarding → preferências (`avisar` = permissão de
-proatividade) → home com o balão "Diminua suas parcelas" no botão flutuante (só se todas as pré-condições passarem) → experiência.
-Botão azul (frasco) = controles da demo (trocar perfil, avançar o relógio para dez/26 — 13º entra — ou jan/27 — mês fraco —, reiniciar).
-A observabilidade (traces, métricas, tokens/custo, logs) fica só no backend — Cloud Trace / Logging / Monitoring e `/metrics`; nada disso aparece na interface.
+Com o BigQuery publicado (`uv run python -m dados.publicar_bq`, 1x): `ZERA_FONTE=bigquery ZERA_ESTADO=bigquery uv run uvicorn api.main:app --port 8080`.
 
-**Conversa com o agente (ADK + HITL):** o botão flutuante abre a conversa sempre que não há um indicador NOVO (sem gatilho, balão dispensado,
-ou só o acompanhamento do acordo); o balão e a experiência guiada têm o link "Conversar"; depois do acordo, digitar na tela guiada
-cai na conversa. A conversa persiste ao navegar (mesma sessão do ADK). Pode haver **mais de uma opção contratada**: o que ficou fora
-do acordo (ou uma dívida nova) abre outra jornada — a parcela já contratada vira compromisso fixo e os acordos ficam listados.
-A pergunta "tem gasto fixo fora do extrato?" só aparece quando os dados sugerem (essenciais < 30% da renda ou sobra > 55%), com os números reais.
-No chat, a sequência (Entender → Opções → Escolher → **Confirmar no app** → Acompanhar) só aparece e avança quando a cliente pede cada etapa;
-cumprimentos, agradecimentos e "não fazer nada agora" são respondidos sem modelo nem tools. Os próximos passos numerados com que toda resposta termina ("1) … 2) …") são extraídos pela API (`opcoes`) e viram **botões** na conversa — o toque envia a opção; "Contratar a C1" abre o card de confirmação direto, sem modelo. Cada opção do card tem o botão **Contratar** (gatilho determinístico:
-`POST /chat/contratar` abre o card de confirmação com os números do motor e `POST /chat/confirmar` executa) — a melhor opção fica destacada e,
-se ela pedir um valor ("parcela até 600"), `montar_cenarios(parcela_alvo)` marca as que atendem ou diz a menor possível e a entrada necessária.
-Números das tools valem para a sessão inteira (caducam quando o estado muda); número inventado pelo modelo nunca chega à cliente — ela recebe
-uma mensagem acolhedora com "falar com uma pessoa" em primeiro lugar, e o bloqueio fica só na observabilidade do backend. A abertura é determinística (contexto + 3 proteções + sugestões de próximo passo);
-cada mensagem vai para o agente ADK via `/chat/stream` e a tela mostra, conforme acontecem, os chips de tool (`informar_renda` /
-`informar_gasto_fixo` quando você diz um valor), os cards do motor
-(raio-X, capacidade, prioridades, cenários com "Quero esta", planos, acordo), o texto, o selo de guardrail e o custo do turno.
-Contratar/respiro/amortizar disparam o **card HITL** (`adk_request_confirmation`): a tool só executa depois de "Confirmar" no app
-(`/chat/confirmar`), com o consentimento registrado (`canal=hitl_app` + frase). A conversa exige `gcloud auth application-default login`
-(Gemini via Vertex AI); a experiência guiada roda sem LLM.
+## A conversa (chat) — o que a banca vê
 
-Sem `gcloud auth application-default login` tudo funciona menos o LLM: "por que" cai nos critérios determinísticos e as perguntas
-livres recebem orientação com ações — nunca um beco sem saída.
+- **Abertura determinística** (0 tokens): contexto do gatilho, três proteções e sugestões. Cumprimentos, agradecimentos e "não fazer nada agora"
+  são respondidos sem modelo; **"1", "2", "3" digitados** são resolvidos contra as últimas opções mostradas, também sem modelo.
+- **Trilha** Entender → Opções → Escolher → **Confirmar no app** → Acompanhar, derivada no backend das tools chamadas; só avança quando a cliente pede.
+- **Cards do motor** (raio-X, capacidade, prioridades, cenários com botão **Contratar** por opção — "melhor para você" destacada —, acordo) conforme os
+  eventos chegam (`etapa · tool_call · tool_result · card · texto · hitl · fim`).
+- **Botões**: a enumeração final de toda resposta ("1) … 2) …") vira botões; "Contratar a C1" abre o card de confirmação direto; "na tela" abre a
+  experiência guiada; "falar com uma pessoa" aciona `escalar_humano`.
+- **Card de confirmação (HITL)**: números do motor, nunca o texto do modelo; consentimento registrado com canal (`hitl_app` / `botao_app`), frase e hora.
+  Recusa → nada executa. Tudo o que acontece fora do modelo (botão, respostas roteadas) entra no histórico da sessão do ADK.
+- **Mais de um acordo**: o que ficou de fora (ou uma dívida nova) abre outra jornada; a parcela contratada vira compromisso fixo. Depois do acordo:
+  status, respiro em mês apertado, amortização com dinheiro extra.
+- Nada de tokens, custo ou selo de guardrail na interface: observabilidade só no backend.
 
-## Dados no BigQuery (produção da demo)
-
-```bash
-gcloud auth application-default login && gcloud config set project batalha-time-03-vhxk
-python -m dados.publicar_bq                # cria zera.extrato (partição/cluster), features, perfil_cliente, dividas_derivadas,
-                                           # k-means (zera.kmeans_perfis), clusters_clientes, perfil_clusters, perfis_demo,
-                                           # estado_cliente, eventos, telemetria — e imprime os perfis do cluster-alvo
-ZERA_FONTE=bigquery ZERA_ESTADO=bigquery uvicorn api.main:app --port 8080
-```
-Sem Python na máquina: `python -m dados.publicar_bq --imprimir` mostra o SQL renderizado para colar no console do BigQuery (Cloud Shell).
-
-## Deploy em produção (um serviço no Cloud Run: API + agente + UI) — runbook completo em [`infra/producao.md`](infra/producao.md)
+## Produção (Cloud Run, um serviço: API + agente + UI)
 
 ```bash
 gcloud auth login && gcloud config set project batalha-time-03-vhxk
-python -m dados.publicar_bq                # 1x (dados + clusterização)
-infra/setup_gcp.sh                         # opcional: Model Armor template
-infra/deploy_app.sh                        # Cloud Build (Dockerfile multi-stage) + Cloud Run + service account com IAM mínimo; imprime a URL
-infra/observabilidade.sh                   # métricas de log, alerta 5xx, orçamento de billing
-infra/smoke_prod.sh $URL                   # valida ponta a ponta: health/ready, perfis, proatividade, chat com Gemini, botão Contratar + HITL
+uv run python -m dados.publicar_bq                    # 1x: tabelas zera.* + k-means + perfis_demo
+uv run python infra/conceder_dataset.py squad-agent-sa@batalha-time-03-vhxk.iam.gserviceaccount.com   # BigQuery ao vivo para a identidade de runtime
+SA_NAME=squad-agent-sa ./infra/deploy_app.sh          # Cloud Build (Dockerfile multi-stage) + Cloud Run; termina com uma sonda do Gemini
+./infra/smoke_prod.sh https://zera-4p3fwfvm4a-uc.a.run.app   # health/ready, perfis, proatividade, chat com Gemini, botão Contratar → HITL → recusa
 ```
-O deploy sobe com `ZERA_FONTE=bigquery ZERA_ESTADO=bigquery ZERA_OTEL_GCP=1 ZERA_TELEMETRIA_BQ=1 ZERA_LOG_JSON=1`:
-traces/métricas OTel do ADK (invocation, agent, call_llm, execute_tool) e do motor vão para `telemetry.googleapis.com`
-(Cloud Trace / Monitoring), logs JSON estruturados para o Cloud Logging, custo por chamada/jornada para `zera.telemetria`.
 
-## Números da persona (perfil mais típico do segmento, com renda informada de ~R$ 2.325)
+O que o deploy configura: `gemini-3.8-flash` no Vertex AI (`GOOGLE_CLOUD_LOCATION=global`, credencial = identidade do serviço), `ZERA_FONTE=bigquery`
+com fallback automático (query → leitura direta das tabelas → snapshot embarcado no build), `ZERA_ESTADO=bigquery` (cai para JSON se recusado),
+`ZERA_STRICT_NUMEROS=1`, 1 instância (sessões do ADK em processo), logs JSON, `ZERA_DOCS=0`. **IAM do projeto do evento**: a conta pessoal não
+cria service account, repositório do Artifact Registry nem altera IAM; a conta compute padrão não tem Vertex nem BigQuery — por isso o serviço roda
+com a **`squad-agent-sa`** (tem `roles/aiplatform.user`) e o BigQuery é liberado no nível do dataset. Sem uma SA com Vertex, `infra/gemini_api_key.sh`
+sobe com chave de API no Secret Manager. Detalhes e falhas conhecidas em [`infra/producao.md`](infra/producao.md).
 
-Hoje: R$ 900/mês em 3 pagamentos, saldo devedor R$ 6.800, R$ 641/mês só de juros, sem prazo. Recomendada: 48x R$ 212,77
-(total R$ 10.213 = R$ 6.800 + R$ 3.413 de juros a 1,8% a.m.); alternativas 36x R$ 258 (menor custo) e 60x R$ 186 (menor parcela).
-Com o 13º (R$ 2.800): quita o cheque especial, abate R$ 1.784 do cartão e renegocia o resto em 24x R$ 212,73 (total R$ 7.789).
-Gasto extra informado de R$ 80/mês muda a recomendação para 60x; R$ 300/mês → "nenhuma opção cabe" com diagnóstico e caminhos.
+## Observabilidade e FinOps (backend)
+
+Logs JSON com request/trace id no Cloud Logging (`http`, `chamada_llm`, `transicao`, `guardrail`); `/metrics` com p50/p95 por etapa e custo por
+jornada; `zera.telemetria` e `zera.eventos` no BigQuery (funil, cumprimento, bloqueios); métricas de log, alerta 5xx e orçamento de billing em
+`infra/observabilidade.sh`. OTel para o Cloud Trace fica desligado neste projeto (Org Policy bloqueia `cloudtrace.googleapis.com`); `ZERA_OTEL_GCP=1`
+religa em outro projeto. Referência de custo: experiência guiada = 0 tokens; jornada com "por que" + 2 perguntas ≈ US$ 0,002.
+
+## Métricas do produto
+
+Principal: **cumprimento em D+90** (acordos com parcelas vencidas integralmente pagas ÷ acordos acompanhados). Apoio: conversão, reincidência,
+recuperação, custo por jornada; para a cliente: compreensão, adequação percebida, respeito e controle (perguntas curtas pós-jornada). Monitoramento
+do agente: números divergentes, respostas sem respaldo, violações de tom, falhas de tools, encaminhamentos.
+
+## Limitações e próximos passos
+
+Contratação, débito automático e boleto são simulados no motor (acordo com termos e CET) — a integração transacional e o Open Finance são o piloto.
+Sessões do ADK em memória (1 instância) → `VertexAiSessionService`/Agent Engine para escala. Gatilhos calculados na leitura → scheduled query
+diária + Pub/Sub. k = 4 validado por Davies-Bouldin; estabilidade dos centróides e revisão de k ficam para o piloto. RAG por busca lexical →
+Vertex AI Search quando a base crescer.
