@@ -37,7 +37,14 @@ repositório no Artifact Registry nem alterar IAM. A identidade de runtime do Cl
   tenta o BigQuery e, ao receber 403, usa o snapshot automaticamente — a fonte aparece como `bigquery_snapshot (<hora da exportação>)`;
 - estado: `ZERA_ESTADO=bigquery` cai para JSON local se a gravação for recusada (1 instância, então consistente).
 
-Se um admin conceder `roles/bigquery.jobUser` + `roles/bigquery.dataEditor` à conta compute, tudo passa a ser ao vivo sem redeploy.
+**Ao vivo sem Owner:** o dono do dataset `zera` (você) pode dar acesso de dataset à conta de runtime — isso basta para a API ler
+`zera.*` direto das tabelas (`tabledata.list`, sem job) e gravar estado/eventos/telemetria por streaming insert:
+
+```bash
+uv run python infra/conceder_dataset.py 27813124245-compute@developer.gserviceaccount.com
+```
+Ordem de tentativa em runtime: query (jobs) → leitura direta das tabelas (dataset) → snapshot embarcado. `/health` mostra qual está ativa.
+Se um admin conceder `roles/bigquery.jobUser` + `roles/bigquery.dataEditor` à conta compute, a query volta a ser usada sem redeploy.
 
 ## 2. Deploy
 

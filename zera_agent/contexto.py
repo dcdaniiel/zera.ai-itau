@@ -80,11 +80,21 @@ class RepositorioBigQuery:
 
     def ler(self, cliente_id: str) -> dict | None:
         sql = f"SELECT apagado, estado FROM `{self.t_estado}` WHERE cliente_id = @id ORDER BY gravado_em DESC LIMIT 1"
-        job = self.client.query(sql, job_config=self.bq.QueryJobConfig(
-            query_parameters=[self.bq.ScalarQueryParameter("id", "STRING", cliente_id)]))
-        for row in job.result():
-            return None if row["apagado"] else json.loads(row["estado"])
-        return None
+        try:
+            job = self.client.query(sql, job_config=self.bq.QueryJobConfig(
+                query_parameters=[self.bq.ScalarQueryParameter("id", "STRING", cliente_id)]))
+            for row in job.result():
+                return None if row["apagado"] else json.loads(row["estado"])
+            return None
+        except Exception as e:  # noqa: BLE001
+            if "jobs.create" not in str(e):
+                raise
+            # sem permissão de job: lê a tabela por tabledata.list (acesso de dataset) e pega o último snapshot do cliente
+            ultimo = None
+            for row in self.client.list_rows(self.t_estado):
+                if row["cliente_id"] == cliente_id and (ultimo is None or row["gravado_em"] > ultimo["gravado_em"]):
+                    ultimo = {"gravado_em": row["gravado_em"], "apagado": row["apagado"], "estado": row["estado"]}
+            return None if not ultimo or ultimo["apagado"] else json.loads(ultimo["estado"])
 
     def gravar(self, cliente_id: str, estado: dict) -> None:
         self._inserir(self.t_estado, [{"cliente_id": cliente_id, "gravado_em": _agora(), "apagado": False,
