@@ -81,7 +81,7 @@ export type PerfilResumo = { cliente_id: string; nome: string; persona: boolean;
   renda_mediana: number; renda_media?: number; meses_com_renda?: number; renda_conhecida: boolean; total_dividas: number; qtd_dividas: number; meses_no_vermelho: number | null
   sinais: string; fonte_dividas: string; fonte: string; segmentacao?: string; score?: number }
 export type Clientes = { fonte: string; perfis: PerfilResumo[]; clusters: Array<Record<string, any>> }
-export type Perfil = { cliente_id: string; nome: string; persona: boolean; fonte: string; renda_desconhecida: boolean; renda_mediana: number
+export type Perfil = { cliente_id: string; nome: string; persona: boolean; fonte: string; renda_desconhecida: boolean; renda_mediana: number; renda_media?: number; renda_fonte?: string; meses_com_renda?: number
   essenciais_mediana: number; total_dividas: number; custo_total_mensal: number; dividas: any[]; capacidade: any; hoje_simulado: string; gatilhos: any[]; acordo: any | null }
 
 /* ---------- conversa com o agente ADK ---------- */

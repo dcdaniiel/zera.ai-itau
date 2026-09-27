@@ -578,6 +578,7 @@ async def perfil(cliente_id: str):
     return {"cliente_id": p.cliente_id, "nome": p.nome, "persona": p.persona, "fonte": p.fonte, "renda_desconhecida": p.renda_desconhecida,
             "renda_informada": p.renda_informada, "meses": p.meses, "renda_mensal": p.renda_mensal, "essenciais_mensal": p.essenciais_mensal,
             "compromissos_mensal": p.compromissos_mensal, "sobra_mensal": p.sobra_mensal, "renda_mediana": p.renda_mediana,
+            "renda_media": p.renda_media, "renda_fonte": p.renda_fonte, "meses_com_renda": p.meses_com_renda,
             "essenciais_mediana": p.essenciais_mediana, "dividas": [d.to_dict() for d in p.dividas], "total_dividas": p.total_dividas,
             "custo_total_mensal": p.custo_total_mensal, "capacidade": c.capacidade.to_dict(), "hoje_simulado": c.estado["hoje"],
             "gatilhos": c.estado.get("gatilhos_pendentes", []), "acordo": c.estado.get("acordo"),

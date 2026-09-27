@@ -81,7 +81,7 @@ ZERA_FONTE=bigquery ZERA_ESTADO=bigquery uvicorn api.main:app --port 8080
 ```
 Sem Python na máquina: `python -m dados.publicar_bq --imprimir` mostra o SQL renderizado para colar no console do BigQuery (Cloud Shell).
 
-## Deploy em produção (um serviço no Cloud Run: API + agente + UI)
+## Deploy em produção (um serviço no Cloud Run: API + agente + UI) — runbook completo em [`infra/producao.md`](infra/producao.md)
 
 ```bash
 gcloud auth login && gcloud config set project batalha-time-03-vhxk
@@ -89,7 +89,7 @@ python -m dados.publicar_bq                # 1x (dados + clusterização)
 infra/setup_gcp.sh                         # opcional: Model Armor template
 infra/deploy_app.sh                        # Cloud Build (Dockerfile multi-stage) + Cloud Run + service account com IAM mínimo; imprime a URL
 infra/observabilidade.sh                   # métricas de log, alerta 5xx, orçamento de billing
-curl -s $URL/health; curl -s $URL/ready; curl -s $URL/metrics
+infra/smoke_prod.sh $URL                   # valida ponta a ponta: health/ready, perfis, proatividade, chat com Gemini, botão Contratar + HITL
 ```
 O deploy sobe com `ZERA_FONTE=bigquery ZERA_ESTADO=bigquery ZERA_OTEL_GCP=1 ZERA_TELEMETRIA_BQ=1 ZERA_LOG_JSON=1`:
 traces/métricas OTel do ADK (invocation, agent, call_llm, execute_tool) e do motor vão para `telemetry.googleapis.com`

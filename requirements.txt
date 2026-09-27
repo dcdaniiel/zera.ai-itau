@@ -1,7 +1,9 @@
 google-adk>=2.0
 google-cloud-aiplatform[agent_engines]
 google-cloud-bigquery
+db-dtypes
 opentelemetry-exporter-otlp-proto-http
 pandas
 fastapi
 uvicorn[standard]
+python-dotenv

@@ -16,10 +16,12 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY motor/ motor/
 COPY dados/ dados/
+COPY conhecimento/ conhecimento/
 COPY zera_agent/ zera_agent/
 COPY api/ api/
 COPY --from=ui /ui/dist ui/dist
-RUN mkdir -p /app/.zera_state && chown -R zera:zera /app
+RUN mkdir -p /app/.zera_state && chown -R zera:zera /app \
+ && python -c "import api.main"   # falha o build se faltar módulo/dependência (nunca descobrir em runtime)
 USER zera
 EXPOSE 8080
 CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT} --workers 1 --proxy-headers --forwarded-allow-ips='*' --timeout-keep-alive 75"]
