@@ -83,14 +83,21 @@ def test_amostra_real_segmentacao_por_regras(monkeypatch, tmp_path):
     perfis = loader.listar_clientes()
     assert 3 <= len(perfis) <= 12 and perfis[0]["nome"] == "Cleide" and perfis[0]["medoide"] is True
     assert all(p["persona"] is False and p["fonte"] == "amostra" and p["qtd_dividas"] > 0 for p in perfis)
-    assert all(perfis[i]["score"] >= perfis[i + 1]["score"] for i in range(len(perfis) - 1))
+    # com renda identificada primeiro; dentro de cada grupo, mais endividado primeiro
+    chave = [(p["renda_conhecida"], p["score"]) for p in perfis]
+    assert chave == sorted(chave, reverse=True)
     p, _ = loader.carregar_perfil(perfis[0]["cliente_id"])
-    assert p.fonte == "amostra" and p.renda_desconhecida and all(d.fonte == "derivada_extrato" for d in p.dividas)
+    assert p.fonte == "amostra" and all(d.fonte == "derivada_extrato" for d in p.dividas)
+    assert p.renda_desconhecida == (p.meses_com_renda == 0)                # renda = entradas do histórico; sem entrada -> desconhecida
+    assert p.renda_fonte.startswith("média mensal das entradas") if not p.renda_desconhecida else p.renda_fonte == "não identificada no extrato"
     with pytest.raises(LookupError):
         loader.carregar_perfil("nao-existe")
     exp = Experiencia(Contexto.para(perfis[0]["cliente_id"]))
     r = asyncio.run(exp.evento("START", {}))
-    assert r["question"] == "renda"                                        # dados insuficientes -> pergunta (nunca inventa)
+    if p.renda_desconhecida:
+        assert r["question"] == "renda"                                    # dados insuficientes -> pergunta (nunca inventa)
+    else:
+        assert r["state"] in ("NEEDS_INFORMATION", "SHOWING_OPTIONS", "NO_SUITABLE_OPTION") and r.get("question") != "renda"
     Contexto.limpar_cache()
 
 
