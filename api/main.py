@@ -311,6 +311,22 @@ async def chat_confirmar_stream(body: ConfirmarIn):
     return StreamingResponse(_stream_chat(body.cliente_id, body.sessao_id, "", conteudo, recusado=not body.confirmed), media_type="application/x-ndjson")
 
 
+def _dica_operador(e: Exception) -> str:
+    """Tradução dos erros de infraestrutura mais comuns do LLM para quem opera a demo (a cliente vê só o texto amigável)."""
+    msg = str(e)
+    if "default credentials" in msg.lower() or "Reauthentication" in msg or "invalid_grant" in msg:
+        return "credencial do Google ausente/expirada — rode `gcloud auth application-default login` e reinicie a API"
+    if "No API key" in msg:
+        return "SDK do Gemini caiu no modo API key: GOOGLE_GENAI_USE_VERTEXAI/GOOGLE_CLOUD_PROJECT não carregados — confira zera_agent/.env"
+    if "404" in msg and ("model" in msg.lower() or "publisher" in msg.lower()):
+        return f"modelo {MODEL} não encontrado nesta location ({os.getenv('GOOGLE_CLOUD_LOCATION')}) — gemini-3.x é servido em `global`; `unset GOOGLE_CLOUD_LOCATION`"
+    if "403" in msg or "PERMISSION_DENIED" in msg:
+        return "sem permissão no Vertex AI para esta conta/projeto (roles/aiplatform.user)"
+    if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+        return "cota do modelo esgotada — tente de novo ou use ZERA_MODEL=gemini-2.5-flash"
+    return msg[:200]
+
+
 async def _stream_chat(cliente_id: str, sessao_id: str, texto: str, conteudo: types.Content | None, recusado: bool = False):
     from zera_agent.tools import ROTULOS_HITL
 
@@ -350,7 +366,8 @@ async def _stream_chat(cliente_id: str, sessao_id: str, texto: str, conteudo: ty
                         yield linha({"tipo": "texto", "texto": t})
     except Exception as e:  # noqa: BLE001 — nunca deixa a UI sem resposta
         log.exception("chat_stream falhou")
-        yield linha({"tipo": "erro", "erro": str(e)[:300], "texto": "Não consegui responder agora. Nenhum valor foi inventado — pode tentar de novo ou falar com uma pessoa do time."})
+        yield linha({"tipo": "erro", "erro": str(e)[:300], "dica": _dica_operador(e),
+                     "texto": "Não consegui responder agora. Nenhum valor foi inventado — pode tentar de novo ou falar com uma pessoa do time."})
     if not final and recusado:
         yield linha({"tipo": "texto", "texto": "Tudo bem, nada foi contratado. Quer ver outra opção ou tirar alguma dúvida?"})
     s2 = await sessoes.get_session(app_name=APP_NAME, user_id=cliente_id, session_id=sessao_id)

@@ -27,7 +27,7 @@ type Item =
   | { k: 'card'; bloco: CardChat }
   | { k: 'hitl'; hitl: Hitl; resolvido?: 'sim' | 'nao' }
   | { k: 'guardrail'; camada: string; tipo: string }
-  | { k: 'sistema'; texto: string }
+  | { k: 'sistema'; texto: string; detalhe?: string }
 
 /* ---------- cards do motor ---------- */
 function Card({ bloco, onEnviar }: { bloco: CardChat; onEnviar: (t: string) => void }) {
@@ -131,7 +131,7 @@ export function Chat({ nome, onSair, onAbrirExperiencia }: { nome: string; onSai
     else if (e.tipo === 'texto') push({ k: 'zera', texto: e.texto, llm: true })
     else if (e.tipo === 'hitl') push({ k: 'hitl', hitl: e.hitl })
     else if (e.tipo === 'guardrail') push({ k: 'guardrail', camada: e.guardrail.camada, tipo: e.guardrail.tipo })
-    else if (e.tipo === 'erro') push({ k: 'sistema', texto: e.texto })
+    else if (e.tipo === 'erro') push({ k: 'sistema', texto: e.texto, detalhe: e.dica ?? e.erro })
     else if (e.tipo === 'llm') setFinops((f) => ({ chamadas: f.chamadas + 1, tokens: f.tokens + e.tokens_entrada + e.tokens_saida, custo: f.custo + e.custo_usd }))
     else if (e.tipo === 'fim') setSugestoes(e.sugestoes)
   }
@@ -165,7 +165,7 @@ export function Chat({ nome, onSair, onAbrirExperiencia }: { nome: string; onSai
           if (it.k === 'card') return <div key={i}><Card bloco={it.bloco} onEnviar={enviar} /></div>
           if (it.k === 'hitl') return <div key={i}><CardHitl hitl={it.hitl} resolvido={it.resolvido} onDecidir={(ok) => decidir(i, it.hitl, ok)} /></div>
           if (it.k === 'guardrail') return <div key={i} className="flex items-center gap-2 rounded-xl bg-itau-blue-soft px-3 py-2 text-[12px] text-itau-blue"><ShieldCheck className="h-4 w-4" /> Guardrail de {it.camada}: <b>{it.tipo.replace(/_/g, ' ')}</b>{it.camada === 'entrada' && ' · modelo não foi chamado'}</div>
-          return <div key={i} className="text-center text-[12px] text-danger">{it.texto}</div>
+          return <div key={i} className="text-center text-[12px] text-danger">{it.texto}{it.detalhe && <div className="mt-1 text-[10px] text-ink-soft break-words">detalhe técnico: {it.detalhe}</div>}</div>
         })}
         {ocupado && <div className="flex items-center gap-2 text-[12px] text-ink-soft"><span className="h-3.5 w-3.5 rounded-full border-2 border-itau-orange border-t-transparent animate-spin" /> zera.ai está trabalhando…</div>}
         <div ref={fim} />
