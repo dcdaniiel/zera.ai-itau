@@ -20,16 +20,30 @@ QR em [`docs/qr-zera-ai.png`](docs/qr-zera-ai.png)). Outros perfis reais do segm
 | [`docs/PRD-MVP.md`](docs/PRD-MVP.md) · [`docs/quadro-produto.md`](docs/quadro-produto.md) · [`docs/estrategia-dados.md`](docs/estrategia-dados.md) | PRD, quadro único de produto (tese, outcomes, guardrails, métricas), estratégia de dados |
 | [`infra/producao.md`](infra/producao.md) | Runbook de produção: deploy, IAM do projeto do evento e contornos, smoke test, observabilidade, rollback |
 
-## Como funciona (uma olhada)
+## Arquitetura aplicada (C4)
 
-```
-cliente (app) ─► UI React ─► API FastAPI ─┬─► Experiência guiada (máquina de estados, 0 tokens) ──┐
-                                          ├─► Agente ADK (Gemini 3.8 Flash) ── 16 tools ─────────┼─► Motor determinístico ─► Contexto / estado
-                                          │      guardrails: entrada · tool · saída               ├─► RAG leve (política, FAQ, glossário)
-                                          └─► Rotas determinísticas (abertura, saudações, opções digitadas, botão Contratar)   │
-                                                                                     dados/loader ◄── BigQuery zera.* (k-means) | snapshot | amostra real
-observabilidade só no backend: logs JSON → Cloud Logging · /metrics · zera.telemetria (Cloud Trace bloqueado por Org Policy no projeto)
-```
+A zera.ai separa em camadas o que precisa ser **exato** do que precisa ser **compreensível**. Um único serviço no Cloud Run reúne a UI, a API
+e o agente; dentro dele, o **motor determinístico** (Python puro) produz todo número, elegibilidade e termo, o **agente ADK com Gemini 3.8 Flash**
+entende a intenção e explica chamando o motor por *function tools*, e os **guardrails em três camadas** (entrada, tool, saída) garantem que
+nenhum número inventado, promessa ou pressão chegue à cliente. Os dados vêm da base do evento via **BigQuery + BigQuery ML** (k-means), o
+estado do cliente é append-only e a observabilidade fica no backend. As ações com efeito — contratar, respiro, amortizar — só executam com a
+confirmação humana no app (HITL nativo do ADK ou botão determinístico).
+
+**Nível 1 — contexto.** Três pessoas (cliente; atendimento humano; produto, crédito e dados), um sistema e cinco dependências. A cliente decide e
+autoriza tudo; o atendimento humano é uma saída prevista, não uma falha.
+
+![C4 nível 1 — contexto](docs/img/c4-nivel1-contexto.png)
+
+**Nível 2 — containers.** Dentro da linha tracejada, tudo roda na mesma imagem (1 instância): UI, API, orquestrador da experiência guiada, agente
+ADK, guardrails, RAG leve, motor, contexto/estado, acesso a dados e observabilidade transversal. Fora, o Google Cloud faz o que é gerenciado:
+modelo (Vertex AI + Model Armor), dados (BigQuery) e observabilidade (Logging/Monitoring).
+
+![C4 nível 2 — containers](docs/img/c4-nivel2-containers.png)
+
+Níveis 3 e 4 (componentes do motor e do agente, máquina de estados, grafo do ADK) estão em [`docs/arquitetura-c4.md`](docs/arquitetura-c4.md);
+a versão para apresentar, com sequências e decisões, em [`docs/arquitetura-c4-apresentacao.html`](docs/arquitetura-c4-apresentacao.html).
+
+**Princípios que o desenho aplica**
 
 - **O LLM nunca calcula.** Capacidade, prioridades, cenários, termos, acordo, respiro, amortização e gatilhos nascem em `motor/` (Python puro,
   testado). O Gemini entende a intenção, conduz e explica; todo número do texto é conferido com os das tools da sessão pelo guardrail de saída —
@@ -51,6 +65,8 @@ observabilidade só no backend: logs JSON → Cloud Logging · /metrics · zera.
 | Qualidade | `ML.EVALUATE`: Davies-Bouldin **1,569**, distância quadrática média 7,286 (k = 4). Curva por k = 2…8: `uv run python -m dados.avaliar_k` (grava `zera.kmeans_avaliacao`, `docs/davies_bouldin.svg` e injeta o gráfico na apresentação) |
 | Persona | medoide do cluster-alvo = "Cleide": renda média R$ 8.632/mês, 11 meses no vermelho, cheque especial R$ 7.537 a 8% a.m. + crediário R$ 1.568 em 4x sem juros — R$ 603/mês só de juros. Hoje a parcela máxima que cabe é R$ 177 e a menor parcela possível é R$ 249 (60x): o motor devolve o **diagnóstico** (faltam R$ 72/mês; entrada de R$ 2.639 ou R$ 96/mês a menos de gastos resolvem) — o 13º (relógio da demo → dez/26) muda o quadro. Outros perfis do segmento fecham acordo direto |
 | Ficha | `bq query --use_legacy_sql=false < dados/sql/ficha_segmento.sql` devolve todos os números da ficha "Público prioritário e persona" |
+
+![Pipeline de dados](docs/img/pipeline-dados.png)
 
 Modo local sem credenciais (`ZERA_FONTE=amostra`): `dados/amostra_bq_extrato_sintetico.csv` é export real (40 clientes × 12 meses,
 `dados/sql/exportar_amostra.sql`, rode por stdin) e `dados/segmentacao.py` aplica as mesmas features com **segmentação por regras**
@@ -102,6 +118,14 @@ Com o BigQuery publicado (`uv run python -m dados.publicar_bq`, 1x): `ZERA_FONTE
 - **Mais de um acordo**: o que ficou de fora (ou uma dívida nova) abre outra jornada; a parcela contratada vira compromisso fixo. Depois do acordo:
   status, respiro em mês apertado, amortização com dinheiro extra.
 - Nada de tokens, custo ou selo de guardrail na interface: observabilidade só no backend.
+
+**Um turno de conversa** — roteamento determinístico, guardrails de entrada e saída, tools do motor, opções extraídas em botões:
+
+![Sequência — um turno de conversa](docs/img/sequencia-turno-conversa.png)
+
+**Contratar pelo botão** — via determinística com o card de confirmação (nada passa pelo Gemini):
+
+![Sequência — contratar pelo botão](docs/img/sequencia-contratar-botao.png)
 
 ## Produção (Cloud Run, um serviço: API + agente + UI)
 
