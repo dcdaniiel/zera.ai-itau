@@ -14,7 +14,7 @@ dados/        loader (BigQuery | amostra real | fixture), segmentação por regr
 zera_agent/   experiencia.py (máquina de estados + contrato estruturado + roteamento de intenção), agente ADK, tools, guardrails, contexto, observabilidade (OTel/logs/métricas/FinOps)
 api/          FastAPI: /v1/clientes (perfis do BQ), experiência (spec v1), /chat/inicio + /chat/stream + /chat/confirmar (agente ADK com HITL nativo, NDJSON), /health /ready /metrics — serve a UI buildada
 ui/           app mobile (React + Vite + Tailwind, paleta Itaú): perfis → onboarding → preferências → home (trigger) → experiência de 10 telas | conversa com o agente (cards, HITL, guardrails)
-tests/        62 testes sem rede (motor, fluxo ponta a ponta, agente com HITL, API de chat, guardrails, dados); tests/fixtures = perfil sintético SÓ para testes
+tests/        85 testes sem rede (motor, fluxo ponta a ponta, agente com HITL, API de chat, guardrails, dados); tests/fixtures = perfil sintético SÓ para testes
 infra/        setup GCP (dados + Model Armor), deploy Cloud Run (produção), observabilidade/FinOps, Agent Engine
 ```
 
@@ -39,18 +39,21 @@ pip install -r requirements.txt            # ou: uv sync
 cp zera_agent/env.demo zera_agent/.env     # lido automaticamente (adk web, uvicorn, pytest); ZERA_FONTE=amostra roda sem credenciais | bigquery (após publicar_bq)
 unset GOOGLE_CLOUD_LOCATION                # variável exportada no shell tem precedência sobre o .env (e o app avisa); gemini-3.x é servido em "global"
 gcloud auth application-default login      # para o Gemini responder "por que essa opção?" e as perguntas livres
-uv run pytest -q                           # 62 testes, sem rede (ou: pytest -q com o venv ativo)
+uv run pytest -q                           # 85 testes, sem rede (ou: pytest -q com o venv ativo)
 uv run uvicorn api.main:app --reload --port 8080   # API (+ serve ui/dist se existir)
 cd ui && npm install && npm run dev        # http://localhost:5173 — /api vai para :8080
 ```
 
 Demo local: `http://localhost:5173` → escolha um perfil (amostra real) → onboarding → preferências (`avisar` = permissão de
 proatividade) → home com o balão "Diminua suas parcelas" no botão flutuante (só se todas as pré-condições passarem) → experiência.
-Botão azul (frasco) = controles da demo (trocar perfil, avançar o relógio para dez/26 — 13º entra — ou jan/27 — mês fraco —, reiniciar)
-e o painel FinOps (chamadas, tokens e custo estimado do LLM).
+Botão azul (frasco) = controles da demo (trocar perfil, avançar o relógio para dez/26 — 13º entra — ou jan/27 — mês fraco —, reiniciar).
+A observabilidade (traces, métricas, tokens/custo, logs) fica só no backend — Cloud Trace / Logging / Monitoring e `/metrics`; nada disso aparece na interface.
 
-**Conversa com o agente (ADK + HITL):** sem balão na home (cliente sem gatilho, ou balão dispensado), o botão flutuante abre a conversa;
-na experiência guiada, o link "Conversar" faz o mesmo. A abertura é determinística (contexto + 3 proteções + sugestões de próximo passo);
+**Conversa com o agente (ADK + HITL):** o botão flutuante abre a conversa sempre que não há um indicador NOVO (sem gatilho, balão dispensado,
+ou só o acompanhamento do acordo); o balão e a experiência guiada têm o link "Conversar"; depois do acordo, digitar na tela guiada
+cai na conversa. A conversa persiste ao navegar (mesma sessão do ADK). Pode haver **mais de uma opção contratada**: o que ficou fora
+do acordo (ou uma dívida nova) abre outra jornada — a parcela já contratada vira compromisso fixo e os acordos ficam listados.
+A pergunta "tem gasto fixo fora do extrato?" só aparece quando os dados sugerem (essenciais < 30% da renda ou sobra > 55%), com os números reais. A abertura é determinística (contexto + 3 proteções + sugestões de próximo passo);
 cada mensagem vai para o agente ADK via `/chat/stream` e a tela mostra, conforme acontecem, os chips de tool (`informar_renda` /
 `informar_gasto_fixo` quando você diz um valor), os cards do motor
 (raio-X, capacidade, prioridades, cenários com "Quero esta", planos, acordo), o texto, o selo de guardrail e o custo do turno.

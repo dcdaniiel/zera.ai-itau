@@ -70,8 +70,9 @@ def test_perfil_bigquery_cliente_real_sem_renda_pergunta(bigquery_stub):
     r = asyncio.run(exp.evento("START", {}))
     assert r["question"] == "renda"
     r = asyncio.run(exp.evento("ANSWER", {"id": "YES", "valor_mensal": 2600}))
-    assert r["question"] == "gasto_recorrente" and Contexto.para(REAL).perfil.renda_mediana == 2600.0
-    r = asyncio.run(exp.evento("ANSWER", {"id": "NO"}))
+    assert Contexto.para(REAL).perfil.renda_mediana == 2600.0
+    if r.get("question") == "gasto_recorrente":                                       # só quando os dados sugerem gasto fora do extrato
+        r = asyncio.run(exp.evento("ANSWER", {"id": "NO"}))
     assert r["state"] in ("SHOWING_OPTIONS", "NO_SUITABLE_OPTION")
 
 

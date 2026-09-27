@@ -214,7 +214,10 @@ def _sugestoes_chat(c: Contexto) -> list[str]:
     """Direcionamento do produto: próximos passos sempre visíveis (a conversa nunca fica sem rumo)."""
     acordo = c.estado.get("acordo")
     if acordo and acordo.get("status") == "ativo":
-        return ["Como está meu acordo?", "Este mês está apertado, posso usar um respiro?", "Entrou um dinheiro extra, o que faço?", "Quero falar com uma pessoa"]
+        s = ["Como está meu acordo?", "Este mês está apertado, posso usar um respiro?", "Entrou um dinheiro extra, o que faço?", "Quero falar com uma pessoa"]
+        if c.perfil.dividas:
+            s.insert(1, "Quero renegociar o que ficou de fora do acordo")
+        return s
     if c.perfil.renda_desconhecida:
         return ["Minha renda é de uns R$ 2.500 por mês", "Quanto eu devo hoje?", "Quero falar com uma pessoa"]
     return ["Quanto eu devo hoje e quanto cresce por mês?", "Quais opções cabem no meu bolso?", "Por que essa opção?", "Quero falar com uma pessoa"]
@@ -254,8 +257,16 @@ async def chat_inicio(cliente_id: str, sessao_id: str = "demo"):
     gat = c.estado.get("gatilhos_pendentes", [])
     acordo = c.estado.get("acordo")
     if acordo and acordo.get("status") == "ativo":
-        texto = (f"{vocativo}seu acordo está em dia: {acordo['parcela']:.2f} por mês, próximo vencimento em {acordo['proximo_vencimento']}. "
-                 "Se um mês apertar, dá para usar um respiro; se entrar um dinheiro extra, dá para amortizar.")
+        ativos = [a for a in c.acordos if a.status == "ativo"]
+        total = sum(a.parcela for a in ativos)
+        from motor.modelos import brl
+        venc = "/".join(reversed(str(acordo["proximo_vencimento"]).split("-"))) if acordo.get("proximo_vencimento") else "—"
+        texto = (f"{vocativo}seu acordo está em dia: {brl(acordo['parcela'])} por mês, próximo vencimento em {venc}. "
+                 if len(ativos) == 1 else
+                 f"{vocativo}você tem {len(ativos)} acordos ativos, {brl(total)} por mês no total; o mais recente vence em {venc}. ")
+        texto += "Se um mês apertar, dá para usar um respiro; se entrar um dinheiro extra, dá para amortizar."
+        if c.perfil.dividas:
+            texto += f" E ainda dá para renegociar o que ficou de fora ({len(c.perfil.dividas)} dívida(s))."
     elif c.perfil.renda_desconhecida:
         texto = (f"{vocativo}sou a zera.ai, do Itaú. Vi suas dívidas no extrato, mas não a sua renda — antes de calcular qualquer coisa, "
                  "preciso que você me diga quanto entra por mês, mais ou menos.")
@@ -413,7 +424,8 @@ async def simular_tempo(body: TempoIn):
 @app.get("/gatilhos/{cliente_id}")
 async def gatilhos(cliente_id: str):
     c = Contexto.para(cliente_id)
-    return {"hoje": c.estado["hoje"], "gatilhos": c.estado.get("gatilhos_pendentes", []), "acordo": c.estado.get("acordo")}
+    return {"hoje": c.estado["hoje"], "gatilhos": c.estado.get("gatilhos_pendentes", []), "acordo": c.estado.get("acordo"),
+            "acordos": [a for a in c.estado.get("acordos", []) if a and a.get("status") == "ativo"]}
 
 
 @app.post("/reset/{cliente_id}")

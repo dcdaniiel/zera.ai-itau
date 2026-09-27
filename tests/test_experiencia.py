@@ -33,8 +33,10 @@ def ev(exp: Experiencia, acao: str, payload: dict | None = None) -> dict:
 
 
 def ate_opcoes(exp: Experiencia) -> dict:
-    ev(exp, "START")
-    return ev(exp, "ANSWER", {"id": "NO"})
+    r = ev(exp, "START")
+    if r["state"] == "NEEDS_INFORMATION":          # a pergunta de gasto só aparece quando os dados sugerem (não é etapa fixa)
+        r = ev(exp, "ANSWER", {"id": "NO"})
+    return r
 
 
 def pergunta(exp: Experiencia, texto: str) -> dict:
@@ -43,11 +45,23 @@ def pergunta(exp: Experiencia, texto: str) -> dict:
 
 # ---------- jornada principal (quadro item 11) ----------
 
+def test_pergunta_de_gasto_so_aparece_quando_os_dados_sugerem():
+    """A tela "tem gasto fixo fora do extrato?" não é etapa fixa: só entra quando essenciais/sobra destoam da renda."""
+    from motor import sinais_gastos_invisiveis
+
+    exp = _exp()
+    assert sinais_gastos_invisiveis(exp.ctx.perfil, exp.ctx.politica) is None            # fixture: essenciais ~67% da renda
+    r = ev(exp, "START")
+    assert r["state"] == "SHOWING_OPTIONS"                                               # nada a confirmar -> direto às opções
+
+
 def test_at01_nao_repete_renda_e_at02_pergunta_gasto_e_recalcula():
     exp = _exp()
+    exp.ctx.politica["pct_essenciais_minimo"] = 0.90                                     # força o sinal (essenciais "baixos")
     r = ev(exp, "START")
     assert r["state"] == "NEEDS_INFORMATION" and r["response_type"] == "QUESTION" and r["question"] == "gasto_recorrente"
-    assert "renda" not in r["content"]["description"].lower()                           # AT01: renda vem do extrato
+    assert r["sinal"]["motivos"] == ["essenciais_baixos"] and "R$" in r["content"]["description"]   # motivo com os números reais
+    assert "renda" not in r["content"]["title"].lower()                                   # AT01: renda vem do extrato
     r = ev(exp, "ANSWER", {"id": "YES", "valor_mensal": 80, "descricao": "remédio"})     # nova despesa informada -> recálculo
     assert r["state"] == "SHOWING_OPTIONS" and r["option"]["term_months"] == 60         # a recomendação muda (48x -> 60x)
     assert Contexto.para(CLIENTE).estado["compromissos_extras"][0]["valor_mensal"] == 80
@@ -152,6 +166,7 @@ def test_at03_at04_proatividade_precisa_de_permissao_e_beneficio():
 
 def test_at10_nenhuma_opcao_adequada_e_actionable():
     exp = _exp()
+    exp.ctx.politica["pct_essenciais_minimo"] = 0.90                                     # força a pergunta de gasto
     ev(exp, "START")
     r = ev(exp, "ANSWER", {"id": "YES", "valor_mensal": 300})                           # gasto grande -> nada cabe
     assert r["state"] == "NO_SUITABLE_OPTION" and r["options"] == [] and r["diagnosis"]["entrada_necessaria"] > 0
@@ -206,8 +221,9 @@ def test_dados_insuficientes_pergunta_renda_uma_vez():
     r = ev(exp, "START")
     assert r["question"] == "renda"
     r = pergunta(exp, "uns 2.300 por mês")                                              # número no texto vira resposta
-    assert r["question"] == "gasto_recorrente" and ctx.perfil.renda_mediana == 2300.0
-    r = ev(exp, "ANSWER", {"id": "NO"})
+    assert ctx.perfil.renda_mediana == 2300.0
+    if r.get("question") == "gasto_recorrente":                                          # só se os dados sugerirem gasto fora do extrato
+        r = ev(exp, "ANSWER", {"id": "NO"})
     assert r["state"] == "SHOWING_OPTIONS"
 
 
@@ -224,9 +240,8 @@ def test_llm_indisponivel_nunca_vira_beco_sem_saida():
 
 def test_at09_falha_de_ferramenta_nao_inventa_dado(monkeypatch):
     exp = _exp()
-    ev(exp, "START")
     monkeypatch.setattr("zera_agent.experiencia.montar_cenarios", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("BigQuery indisponível")))
-    r = ev(exp, "ANSWER", {"id": "NO"})
+    r = ev(exp, "START")
     assert r["response_type"] == "ERROR" and r["state"] == "ERROR" and r["options"] == []
     assert "ESCALATE" in r["allowed_actions"] and "R$" not in r["content"]["description"]
     monkeypatch.undo()
@@ -253,3 +268,46 @@ def test_toda_acao_tem_transicao_em_todo_estado():
             assert r["allowed_actions"], f"{estado} × {acao} sem saída"
             assert r["response_type"] != "ERROR" or acao == "CONFIRM", f"{estado} × {acao} -> ERROR"
             Contexto.limpar_cache()
+
+
+# ---------- mais de uma opção contratada ----------
+
+def test_mais_de_uma_opcao_contratada_jornada_nova_sobre_o_que_ficou_de_fora():
+    """Depois do 1º acordo, uma dívida nova aparece no extrato: a cliente abre outra jornada só sobre o que ficou de fora;
+    o 2º acordo respeita a parcela já contratada (vira compromisso fixo) e os dois ficam ativos."""
+    from motor.modelos import Divida
+
+    exp = _exp()
+    ate_opcoes(exp)
+    ctx = Contexto.para(CLIENTE)
+    capacidade_antes = ctx.capacidade.parcela_maxima
+    ev(exp, "SELECT_OPTION", {"option_id": "balanced"}); ev(exp, "CONTINUE"); ev(exp, "SET_AUTOPAY", {"id": "AUTOPAY_NO"})
+    r = ev(exp, "CONFIRM", {"frase": "Confirmar contratação"})
+    assert r["state"] == "COMPLETED" and len([a for a in ctx.acordos if a.status == "ativo"]) == 1
+    parcela_1 = ctx.acordo.parcela
+    assert ctx.capacidade.parcela_maxima < capacidade_antes                            # parcela contratada vira compromisso fixo
+    assert ctx.perfil.dividas == []                                                      # tudo entrou no acordo: nada de fora
+    r = ev(exp, "GET")
+    assert r["response_type"] == "SUMMARY" and not any(q["id"] == "START_RESTANTE" for q in r["quick_replies"])
+    assert ev(exp, "START", {"nova_jornada": True})["response_type"] == "SUMMARY"      # sem dívida de fora, não abre jornada
+
+    # dívida nova no extrato (ex.: entrou no rotativo de novo) -> fica fora do acordo
+    ctx._dividas_base.append(Divida(divida_id="d_nova", produto="cartao_rotativo", saldo=1500.0, taxa_mensal=0.14, instituicao="Itaú", fonte="derivada_extrato"))
+    ctx._aplicar_acordos()
+    assert [d.divida_id for d in ctx.perfil.dividas] == ["d_nova"] and len(ctx.dividas_em_acordo) == 3
+    r = ev(exp, "GET")
+    assert any(q["id"] == "START_RESTANTE" for q in r["quick_replies"]) and r["dividas_restantes"][0]["divida_id"] == "d_nova"
+
+    r = ev(exp, "START", {"nova_jornada": True})
+    if r["state"] == "NEEDS_INFORMATION":
+        r = ev(exp, "ANSWER", {"id": "NO"})
+    assert r["state"] == "SHOWING_OPTIONS" and all(a["divida_id"] == "d_nova" for o in r["options"] for a in o["actions"])
+    ev(exp, "SELECT_OPTION", {"option_id": r["option"]["id"]}); ev(exp, "CONTINUE"); ev(exp, "SET_AUTOPAY", {"id": "AUTOPAY_NO"})
+    r = ev(exp, "CONFIRM", {"frase": "Confirmar contratação"})
+    assert r["state"] == "COMPLETED"
+    ativos = [a for a in ctx.acordos if a.status == "ativo"]
+    assert len(ativos) == 2 and ativos[0].parcela == parcela_1 and ativos[1].componentes[0]["divida_id"] == "d_nova"
+    assert ctx.perfil.dividas == [] and ctx.estado["acordo"]["acordo_id"] == ativos[1].acordo_id
+    r = ev(exp, "GET")
+    assert r["content"]["title"] == "Suas opções contratadas" and r["parcela_total"] == round(ativos[0].parcela + ativos[1].parcela, 2)
+    assert len(r["agreements"]) == 2

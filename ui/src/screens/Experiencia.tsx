@@ -107,7 +107,7 @@ function Summary({ r, onAcao }: { r: Resposta; onAcao: OnAcao }) {
     const a = r.agreement
     return (
       <>
-        <Topo /><Titulo>{r.content.title}</Titulo><Sub>Suas dívidas foram reunidas em uma única parcela.</Sub>
+        <Topo /><Titulo>{r.content.title}</Titulo><Sub>{(r.agreements?.length ?? 1) > 1 ? `${r.agreements!.length} acordos ativos · ${brl(r.parcela_total ?? 0)} por mês no total.` : 'Suas dívidas foram reunidas em uma única parcela.'}</Sub>
         <div className="mt-5 rounded-3xl bg-ok-soft/60 p-4">
           <div className="flex items-center justify-between"><span className="chip bg-ok-soft text-ok">{r.autopay ? 'Com débito automático' : 'Pagamento manual'}</span><span className="text-[22px] font-extrabold">{brl(a.parcela)}<span className="text-xs font-medium text-ink-soft">/mês</span></span></div>
           <div className="text-[13px] text-ink-soft mt-1">{a.prazo} meses · {t ? `${brl(t.total_a_pagar)} no total` : `${a.pagas} de ${a.prazo} pagas`}</div>
@@ -121,8 +121,18 @@ function Summary({ r, onAcao }: { r: Resposta; onAcao: OnAcao }) {
           <Linha icon={<CalendarDays className="h-4 w-4" />} k="Próximo vencimento" v={dataLonga(a.proximo_vencimento)} />
           <Linha icon={<Landmark className="h-4 w-4" />} k="Saldo devedor do acordo" v={brl(a.saldo_devedor)} />
         </div>
+        {(r.agreements?.length ?? 0) > 1 && (
+          <div className="card mt-3 p-4">
+            <div className="text-[13px] font-semibold mb-1">Todos os acordos</div>
+            {r.agreements!.map((x: any, i: number) => <Linha key={x.acordo_id} icon={<Layers className="h-4 w-4" />} k={`Acordo ${i + 1} · ${x.componentes?.map((c: any) => c.nome).join(', ') || x.plano_id}`} v={`${brl(x.parcela)}/mês · ${x.pagas} de ${x.prazo}`} />)}
+          </div>
+        )}
+        {(r.dividas_restantes?.length ?? 0) > 0 && (
+          <div className="mt-3 rounded-2xl bg-itau-orange-soft/60 p-3 text-[13px]"><b>Fora do acordo:</b> {r.dividas_restantes!.map((d: any) => `${d.produto?.replace('_', ' ')} ${brl(d.saldo)}`).join(', ')}. Dá para renegociar também — veja as opções abaixo.</div>
+        )}
         {r.autopay && <div className="mt-3 flex items-start gap-3 rounded-2xl bg-itau-blue-soft/60 p-3 text-[13px] text-ink-soft"><ShieldCheck className="h-5 w-5 shrink-0 text-itau-blue" /> O débito automático está ativo. Você pode cancelar quando quiser.</div>}
         {r.allowed_actions.includes('CANCEL_AUTOPAY') && <button onClick={() => onAcao('CANCEL_AUTOPAY')} className="card w-full mt-3 p-4 flex items-center justify-between text-[15px] font-semibold">Cancelar débito automático <ChevronRight className="h-5 w-5 text-ink-soft" /></button>}
+        {r.quick_replies?.some((q) => q.id === 'START_RESTANTE') && <div className="mt-4"><Cta onClick={() => onAcao('START', { nova_jornada: true })}>Renegociar o que ficou de fora</Cta></div>}
         <div className="mt-4"><Cta onClick={() => onAcao('HOME')}>Voltar para o início</Cta></div>
       </>
     )
@@ -357,7 +367,7 @@ function Erro({ r, onAcao, onSair }: { r: Resposta; onAcao: OnAcao; onSair: () =
 /* ---------- shell ---------- */
 type Bolha = { de: 'cliente' | 'zera'; texto: string }
 
-export function Experiencia({ onSair, inicial, onConversar }: { onSair: () => void; inicial?: Resposta; onConversar?: () => void }) {
+export function Experiencia({ onSair, inicial, onConversar }: { onSair: () => void; inicial?: Resposta; onConversar?: (texto?: string) => void }) {
   const [resp, setResp] = useState<Resposta | null>(inicial ?? null)
   const [carregando, setCarregando] = useState(false)
   const [status, setStatus] = useState<{ title: string; steps: string[]; feitos: number } | null>(null)
@@ -389,7 +399,6 @@ export function Experiencia({ onSair, inicial, onConversar }: { onSair: () => vo
   const voltar = resp && ['REVIEWING', 'AWAITING_CONFIRMATION', 'EXPLAINING'].includes(resp.state) && resp.response_type !== 'SUCCESS'
   const esperando = carregando && !status
   const podePerguntar = !!resp && resp.response_type !== 'SUCCESS' && !status
-  const finops = resp?.finops
 
   return (
     <div className="h-full flex flex-col bg-[#FBF6F1] relative overflow-hidden">
@@ -397,7 +406,7 @@ export function Experiencia({ onSair, inicial, onConversar }: { onSair: () => vo
       <div className="relative flex items-center justify-between px-4 pt-4 pb-2">
         {voltar ? <button onClick={() => acao('CANCEL')} aria-label="Voltar" className="h-10 w-10 -ml-2 grid place-items-center rounded-full active:bg-black/5"><ChevronLeft /></button>
           : <button onClick={onSair} aria-label="Fechar" className="h-10 w-10 -ml-2 grid place-items-center rounded-full active:bg-black/5"><X /></button>}
-        <span className="flex items-center gap-2 text-[15px] font-semibold text-ink-soft"><History className="h-4 w-4" /> zera.ai{onConversar && <button onClick={onConversar} className="ml-2 text-[12px] font-bold text-itau-orange">Conversar</button>}</span>
+        <span className="flex items-center gap-2 text-[15px] font-semibold text-ink-soft"><History className="h-4 w-4" /> zera.ai{onConversar && <button onClick={() => onConversar()} className="ml-2 text-[12px] font-bold text-itau-orange">Conversar</button>}</span>
       </div>
       {esperando && (
         <div className="absolute inset-x-0 top-14 z-20 flex justify-center pointer-events-none" aria-live="polite">
@@ -429,11 +438,11 @@ export function Experiencia({ onSair, inicial, onConversar }: { onSair: () => vo
       </div>
       {podePerguntar && (
         <div className="relative px-4 pb-4 pt-1">
-          <form className="flex items-center gap-2 rounded-full bg-white border border-line px-4 py-2 shadow-sm" onSubmit={(e) => { e.preventDefault(); if (texto.trim()) { acao('ASK_QUESTION', { text: texto.trim() }); setTexto('') } }}>
+          <form className="flex items-center gap-2 rounded-full bg-white border border-line px-4 py-2 shadow-sm" onSubmit={(e) => { e.preventDefault(); if (!texto.trim()) return; const t = texto.trim(); setTexto(''); if (resp?.state === 'COMPLETED' && onConversar) onConversar(t); else acao('ASK_QUESTION', { text: t }) }}>
             <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Digite aqui" className="flex-1 bg-transparent outline-none text-[15px] py-1" aria-label="Pergunte à zera.ai" />
             {texto.trim() ? <button type="submit" aria-label="Enviar" className="h-9 w-9 grid place-items-center rounded-full bg-itau-orange text-white"><ArrowUp className="h-5 w-5" /></button> : <Mic className="h-5 w-5 text-ink-soft" />}
           </form>
-          <div className="mt-2 flex items-center justify-center gap-2 text-center text-[11px] text-ink-soft"><span>{resp?.disclaimer}</span>{finops && finops.chamadas > 0 && <span className="chip bg-mist text-ink-soft" title="FinOps: custo estimado desta jornada">LLM {finops.chamadas}× · {finops.tokens_entrada + finops.tokens_saida} tokens · US$ {finops.custo_usd.toFixed(4)}</span>}</div>
+          <div className="mt-2 flex items-center justify-center gap-2 text-center text-[11px] text-ink-soft"><span>{resp?.disclaimer}</span></div>
         </div>
       )}
     </div>

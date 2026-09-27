@@ -1,4 +1,4 @@
-import { Activity, CalendarClock, FlaskConical, RotateCcw, Users, WifiOff, X } from 'lucide-react'
+import { CalendarClock, FlaskConical, RotateCcw, Users, WifiOff, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { api, getCliente, setCliente } from './api'
 import { Chat } from './screens/Chat'
@@ -18,16 +18,16 @@ export default function App() {
   const [hoje, setHoje] = useState<string>('')
   const [erroApi, setErroApi] = useState<string | null>(null)
   const [dev, setDev] = useState(false)
+  const [acordos, setAcordos] = useState<any[]>([])
   const [ocupado, setOcupado] = useState(false)
   const [inicial, setInicial] = useState<Resposta | undefined>()
-  const [finops, setFinops] = useState<any | null>(null)
 
   async function atualizarHome() {
     setProativa(undefined); setErroApi(null)
     try {
       // ordem da spec: trigger -> contexto -> oportunidade -> benefício -> permissão -> conteúdo; senão, silêncio
       const [p, e] = await Promise.all([api.proativa(), api.estado()])
-      setProativa(p); setAcordo(e.acordo); setHoje(e.hoje)
+      setProativa(p); setAcordo(e.acordo); setAcordos(e.acordos ?? []); setHoje(e.hoje)
     } catch (e) {
       setProativa(null); setErroApi(e instanceof Error ? e.message : 'API indisponível')
     }
@@ -47,13 +47,15 @@ export default function App() {
   const abrir = () => { setInicial(undefined); setTela('experiencia') }
   /* Botão flutuante: com indicador proativo -> fluxo guiado (10 telas); sem indicador -> conversa com o agente ADK
      (guardrails + HITL + direcionamento do produto). Recusar a proatividade nunca impede pedir ajuda. */
-  const abrirPeloBotao = () => { const temBalao = !!proativa && !proativa.silent && proativa.response_type === 'PROACTIVE_MESSAGE'; if (temBalao) abrir(); else { setInicial(undefined); setTela('chat') } }
+  const [chatInicial, setChatInicial] = useState<string | undefined>()
+  const abrirChat = (texto?: string) => { setChatInicial(texto); setInicial(undefined); setTela('chat') }
+  /* Indicador NOVO (gatilho) -> fluxo guiado; só o acompanhamento do acordo (ou nenhum indicador) -> conversa com o agente */
+  const abrirPeloBotao = () => { const temBalaoNovo = !!proativa && !proativa.silent && proativa.response_type === 'PROACTIVE_MESSAGE' && proativa.trigger !== 'acordo_ativo'; if (temBalaoNovo) abrir(); else abrirChat() }
   const sair = async () => { setTela('home'); await atualizarHome() }
   async function dispensar() { setOcupado(true); try { await api.evento('DISMISS'); await atualizarHome() } finally { setOcupado(false) } }
 
   async function avancar(ate: string) { setDev(false); setOcupado(true); try { await api.simularTempo(ate); setTela('home'); await atualizarHome() } catch (e) { setErroApi(String(e)) } finally { setOcupado(false) } }
   async function reset() { setDev(false); setOcupado(true); try { await api.reset(); setProativa(undefined); setAcordo(null); setTela('onboarding') } catch (e) { setErroApi(String(e)) } finally { setOcupado(false) } }
-  async function verMetricas() { try { setFinops((await api.metrics()).finops) } catch { setFinops(null) } }
 
   const nome = perfil?.nome ?? 'Cliente'
   return (
@@ -63,9 +65,9 @@ export default function App() {
         {tela === 'perfis' && <Perfis onEscolher={escolherPerfil} />}
         {tela === 'onboarding' && <Onboarding nome={nome} onAtivar={() => setTela('preferencias')} onDepois={() => { setTela('home'); atualizarHome() }} />}
         {tela === 'preferencias' && <Preferencias nome={nome} onVoltar={() => setTela('onboarding')} onSalvar={salvarPreferencias} />}
-        {tela === 'home' && <Home nome={nome} proativa={proativa} acordo={acordo} erro={erroApi} onAbrir={abrir} onAbrirBotao={abrirPeloBotao} onDispensar={dispensar} onRecarregar={atualizarHome} />}
-        {tela === 'experiencia' && <Experiencia onSair={sair} inicial={inicial} onConversar={() => setTela('chat')} />}
-        {tela === 'chat' && <Chat nome={nome} onSair={sair} onAbrirExperiencia={abrir} />}
+        {tela === 'home' && <Home nome={nome} proativa={proativa} acordo={acordo} acordos={acordos} erro={erroApi} onAbrir={abrir} onAbrirBotao={abrirPeloBotao} onConversar={() => abrirChat()} onDispensar={dispensar} onRecarregar={atualizarHome} />}
+        {tela === 'experiencia' && <Experiencia onSair={sair} inicial={inicial} onConversar={abrirChat} />}
+        {tela === 'chat' && <Chat nome={nome} onSair={sair} onAbrirExperiencia={abrir} mensagemInicial={chatInicial} />}
 
         {erroApi && tela !== 'home' && (
           <div className="absolute inset-x-3 top-3 z-40 flex items-center gap-2 rounded-2xl bg-danger-soft px-3 py-2 text-xs text-danger shadow"><WifiOff className="h-4 w-4 shrink-0" /> {erroApi}<button className="ml-auto font-bold" onClick={() => setErroApi(null)}>ok</button></div>
@@ -73,7 +75,7 @@ export default function App() {
         {ocupado && <div className="absolute inset-0 z-40 bg-white/40 backdrop-blur-[1px] grid place-items-center"><div className="h-9 w-9 rounded-full border-4 border-itau-orange border-t-transparent animate-spin" /></div>}
 
         {tela !== 'perfis' && tela !== 'chat' && (
-          <button onClick={() => { setDev((v) => !v); if (!dev) verMetricas() }} aria-label="Controles da demo"
+          <button onClick={() => setDev((v) => !v)} aria-label="Controles da demo"
             className="absolute top-[4.25rem] right-3 z-30 h-9 w-9 rounded-full bg-itau-blue text-white grid place-items-center shadow-lg opacity-60 active:scale-95">
             {dev ? <X className="h-4 w-4" /> : <FlaskConical className="h-4 w-4" />}
           </button>
@@ -95,7 +97,6 @@ export default function App() {
                 </button>
               ))}
             </div>
-            {finops && <div className="mt-3 rounded-xl bg-mist p-2 text-[11px] text-ink-soft"><div className="flex items-center gap-1 font-bold"><Activity className="h-3 w-3" /> FinOps (esta instância da API)</div>LLM: {finops.chamadas_llm} chamadas · {finops.tokens_entrada + finops.tokens_saida} tokens · US$ {(finops.custo_llm_total_usd ?? 0).toFixed(4)} · acordos fechados: {finops.acordos_fechados}{finops.custo_medio_por_acordo_usd != null && ` · US$ ${finops.custo_medio_por_acordo_usd.toFixed(4)} por acordo`}<div className="mt-1">O núcleo determinístico custa 0 tokens; o LLM só entra em “por que” e nas perguntas livres.</div></div>}
           </div>
         )}
       </div>

@@ -170,7 +170,7 @@ C4Component
 stateDiagram-v2
   [*] --> IDLE
   IDLE --> EVALUATING: START
-  EVALUATING --> NEEDS_INFORMATION: renda desconhecida ou gasto não perguntado
+  EVALUATING --> NEEDS_INFORMATION: renda desconhecida, ou sinal de gasto fora do extrato (essenciais/sobra destoam da renda)
   NEEDS_INFORMATION --> CALCULATING: ANSWER
   EVALUATING --> CALCULATING
   CALCULATING --> SHOWING_OPTIONS: opções válidas
@@ -188,6 +188,7 @@ stateDiagram-v2
   ERROR --> CALCULATING: RETRY
   SHOWING_OPTIONS --> IDLE: CANCEL (pausa)
   COMPLETED --> COMPLETED: acompanhamento (respiro, amortização, cancelar débito automático)
+  COMPLETED --> EVALUATING: START nova_jornada (mais de uma opção contratada: só o que ficou fora do acordo)
 ```
 
 Roteamento de texto livre (`_intencao`, antes do LLM): LGPD → apagar dados · pessoa/atendente → ESCALATE · agora não/depois → CANCEL (pausa) ·

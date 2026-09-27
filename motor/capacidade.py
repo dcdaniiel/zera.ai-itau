@@ -67,3 +67,38 @@ def calcular_capacidade(perfil: PerfilFinanceiro, politica: dict | None = None) 
         sobra_mediana=sobra_med,
         explicacao=explicacao,
     )
+
+
+def sinais_gastos_invisiveis(perfil: PerfilFinanceiro, politica: dict | None = None) -> dict | None:
+    """Decide, pelos DADOS, se vale perguntar por um gasto fixo que não aparece no extrato (nunca por padrão).
+
+    Sem renda conhecida não se avalia (a renda é perguntada antes). Devolve None quando o extrato parece completo;
+    senão, os motivos e os números que a interface mostra para justificar a pergunta.
+    """
+    pol = politica or POLITICA_PADRAO
+    if perfil.renda_desconhecida or perfil.renda_media <= 0:
+        return None
+    renda = perfil.renda_media
+    essenciais = perfil.essenciais_mediana
+    sobra = r2(median(perfil.sobra_mensal)) if perfil.sobra_mensal else 0.0
+    pct_essenciais = r2(essenciais / renda)
+    pct_sobra = r2(sobra / renda)
+    motivos = []
+    if pct_essenciais < pol["pct_essenciais_minimo"]:
+        motivos.append("essenciais_baixos")
+    if pct_sobra > pol["pct_sobra_suspeita"]:
+        motivos.append("sobra_alta")
+    if not motivos:
+        return None
+    return {
+        "motivos": motivos,
+        "renda_media": renda,
+        "essenciais_mediana": essenciais,
+        "pct_essenciais": pct_essenciais,
+        "sobra_mediana": sobra,
+        "pct_sobra": pct_sobra,
+        "compromissos_informados": r2(sum(perfil.compromissos_mensal) / len(perfil.compromissos_mensal)) if perfil.compromissos_mensal else 0.0,
+        "explicacao": (f"As contas essenciais no extrato somam {essenciais:.2f} por mês ({pct_essenciais*100:.0f}% da renda de {renda:.2f})"
+                       + (f" e sobra {sobra:.2f} ({pct_sobra*100:.0f}%)" if "sobra_alta" in motivos else "")
+                       + " — costuma ser mais. Pode existir um gasto fixo que não passa por esta conta (aluguel, escola, remédio, ajuda em casa)."),
+    }

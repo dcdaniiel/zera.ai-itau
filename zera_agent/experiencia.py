@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Awaitable, Callable
 from uuid import uuid4
 
-from motor import criar_acordo_de_cenario, montar_cenarios, resumo_cenario, situacao_hoje, termos
+from motor import criar_acordo_de_cenario, montar_cenarios, resumo_cenario, sinais_gastos_invisiveis, situacao_hoje, termos
 from motor.beneficios import (
     ORDEM_OBJETIVOS,
     beneficio_principal,
@@ -291,7 +291,7 @@ class Experiencia:
         if acao in ("GET", "HOME", "FOLLOW"):
             return self.resposta_atual()
         if acao == "START":
-            return self._start()
+            return self._start(nova_jornada=bool(payload.get("nova_jornada")))
         if acao == "ANSWER":
             return self._answer(payload)
         if acao == "VIEW_OPTIONS":
@@ -372,14 +372,26 @@ class Experiencia:
         st = self.state if self.state not in ("COMPLETED", "ERROR", "EVALUATING", "EXECUTING") else "IDLE"
         if acordo and acordo.get("status") == "ativo":
             autopay = bool(self.ctx.estado.get("debito_automatico"))
-            return _resposta("COMPLETED", "SUMMARY", "Sua nova opção",
-                             f"Suas dívidas foram reunidas em uma única parcela de {brl(acordo['parcela'])}; próximo vencimento em {acordo['proximo_vencimento']}. "
-                             "Se um mês apertar, é só me chamar: dá para usar um respiro.",
-                             summary=hoje, agreement=acordo, final_terms=self.exp.get("termos_finais"), autopay=autopay,
-                             allowed_actions=["ASK_QUESTION", "HOME"] + (["CANCEL_AUTOPAY"] if autopay else []),
-                             quick_replies=[{"id": "Q_RESPIRO", "label": "Este mês está apertado", "text": "Este mês está apertado, posso usar um respiro?"},
-                                            {"id": "Q_STATUS", "label": "Como está meu acordo?", "text": "Como está meu acordo?"}],
-                             numeros_permitidos=hoje["numeros_permitidos"])
+            ativos = [a.to_dict() for a in self.ctx.acordos if a.status == "ativo"]
+            parcela_total = r2(sum(a["parcela"] for a in ativos))
+            restantes = self.ctx.perfil.dividas
+            if len(ativos) > 1:
+                desc = (f"Você tem {len(ativos)} acordos ativos, {brl(parcela_total)} por mês no total; o mais recente vence em {acordo['proximo_vencimento']}. "
+                        "Se um mês apertar, é só me chamar: dá para usar um respiro.")
+            else:
+                desc = (f"Suas dívidas foram reunidas em uma única parcela de {brl(acordo['parcela'])}; próximo vencimento em {acordo['proximo_vencimento']}. "
+                        "Se um mês apertar, é só me chamar: dá para usar um respiro.")
+            if restantes:
+                desc += f" Ainda ficaram {len(restantes)} dívida(s) fora do acordo ({brl(sum(d.saldo for d in restantes))}) — dá para renegociar também."
+            quick = [{"id": "Q_RESPIRO", "label": "Este mês está apertado", "text": "Este mês está apertado, posso usar um respiro?"},
+                     {"id": "Q_STATUS", "label": "Como está meu acordo?", "text": "Como está meu acordo?"}]
+            if restantes:
+                quick.insert(0, {"id": "START_RESTANTE", "label": "Renegociar o que ficou de fora", "acao": "START", "payload": {"nova_jornada": True}})
+            return _resposta("COMPLETED", "SUMMARY", "Sua nova opção" if len(ativos) == 1 else "Suas opções contratadas", desc,
+                             summary=hoje, agreement=acordo, agreements=ativos, parcela_total=parcela_total,
+                             dividas_restantes=[d.to_dict() for d in restantes], final_terms=self.exp.get("termos_finais"), autopay=autopay,
+                             allowed_actions=["ASK_QUESTION", "HOME"] + (["START"] if restantes else []) + (["CANCEL_AUTOPAY"] if autopay else []),
+                             quick_replies=quick, numeros_permitidos=hoje["numeros_permitidos"] + [parcela_total])
         if self.ctx.perfil.renda_desconhecida:
             desc = ("Encontrei suas dívidas, mas não identifiquei entradas de renda no seu extrato. "
                     "Antes de calcular, vou te perguntar quanto entra por mês — nada é calculado sem isso.")
@@ -393,10 +405,13 @@ class Experiencia:
                          numeros_permitidos=hoje["numeros_permitidos"])
 
     # --- EVALUATING -> NEEDS_INFORMATION | CALCULATING
-    def _start(self) -> dict:
+    def _start(self, nova_jornada: bool = False) -> dict:
         acordo = self.ctx.estado.get("acordo")
         if acordo and acordo.get("status") == "ativo":
-            return self._entrada()
+            # mais de uma opção contratada: com dívidas ainda fora de acordo, a cliente pode abrir uma nova jornada
+            if not (nova_jornada and self.ctx.perfil.dividas):
+                return self._entrada()
+            self.exp.update({"selected_option": None, "autopay": None, "opcoes": None, "termos_finais": None})
         self.exp["escalado"] = None
         self._ir("EVALUATING")
         pendente = self._proxima_pergunta()
@@ -410,10 +425,18 @@ class Experiencia:
         # 5.1 contexto suficiente? renda vem do extrato; se não veio, é a ÚNICA vez que perguntamos (dados insuficientes).
         if self.ctx.perfil.renda_desconhecida and "renda" not in feitas:
             return "renda"
-        # inferência crítica: gastos fixos fora do extrato mudam "quanto cabe" -> perguntar uma vez (AT02, 5.3)
-        if "gasto_recorrente" not in feitas:
+        # inferência crítica: gastos fixos fora do extrato mudam "quanto cabe" -> perguntar UMA vez, e SÓ quando os
+        # dados sugerem que falta algo (essenciais baixos / sobra alta para a renda) — nunca como etapa fixa (AT02, 5.3)
+        if "gasto_recorrente" not in feitas and self._sinal_gastos() is not None:
             return "gasto_recorrente"
         return None
+
+    def _sinal_gastos(self) -> dict | None:
+        try:
+            return sinais_gastos_invisiveis(self.ctx.perfil, self.ctx.politica)
+        except Exception as e:  # noqa: BLE001 — sinal é auxiliar; nunca trava o fluxo (mas fica no log)
+            log.warning("sinal de gastos invisíveis falhou: %s", e)
+            return None
 
     def _pergunta_pendente(self) -> dict:
         pendente = self._proxima_pergunta() or "gasto_recorrente"
@@ -423,13 +446,18 @@ class Experiencia:
                              question="renda",
                              quick_replies=[{"id": "YES", "label": "Informar minha renda", "input": {"campo": "valor_mensal", "tipo": "moeda", "placeholder": "Renda por mês (R$)"}}],
                              allowed_actions=["ANSWER", "ASK_QUESTION", "CANCEL"])
-        return _resposta("NEEDS_INFORMATION", "QUESTION", "Antes de calcular, preciso confirmar uma coisa.",
-                         "Você tem algum gasto importante todo mês que não aparece nas suas contas? Assim você mantém esse compromisso em vista ao comparar as opções.",
-                         question="gasto_recorrente",
+        sinal = self._sinal_gastos() or {}
+        renda, ess, pct = sinal.get("renda_media", 0.0), sinal.get("essenciais_mediana", 0.0), sinal.get("pct_essenciais", 0.0)
+        motivo = (f"No seu extrato, as contas essenciais somam {brl(ess)} por mês — {pct*100:.0f}% da renda de {brl(renda)}. "
+                  "Costuma ser mais: tem algum gasto fixo que não passa por esta conta (aluguel, escola, remédio, ajuda em casa)? "
+                  "Assim você mantém esse compromisso em vista ao comparar as opções.")
+        return _resposta("NEEDS_INFORMATION", "QUESTION", "Antes de calcular, preciso confirmar uma coisa.", motivo,
+                         question="gasto_recorrente", sinal=sinal,
                          quick_replies=[{"id": "NO", "label": "Não", "hint": "Seguir com as informações que já tenho"},
                                         {"id": "YES", "label": "Sim", "hint": "Quero incluir um gasto", "input": {"campo": "valor_mensal", "tipo": "moeda", "placeholder": "Valor mensal do gasto (R$)"}}],
                          allowed_actions=["ANSWER", "ASK_QUESTION", "CANCEL"],
-                         compromissos=self.ctx.estado.get("compromissos_extras", []))
+                         compromissos=self.ctx.estado.get("compromissos_extras", []),
+                         numeros_permitidos=[renda, ess])
 
     def _answer(self, payload: dict) -> dict:
         if self.state != "NEEDS_INFORMATION":
@@ -716,7 +744,7 @@ class Experiencia:
                 "REVIEWING": ["CONTINUE", "VIEW_OPTIONS", "ASK_WHY", "ASK_QUESTION", "CANCEL"],
                 "AWAITING_CONFIRMATION": ["CONFIRM", "CANCEL", "ASK_QUESTION"],
                 "EXECUTING": ["GET"],
-                "COMPLETED": ["ASK_QUESTION", "HOME"],
+                "COMPLETED": ["ASK_QUESTION", "HOME", "START"],
                 "NO_SUITABLE_OPTION": ["ADJUST", "ESCALATE", "RETRY", "ASK_QUESTION", "HOME"],
                 "ERROR": ["RETRY", "ESCALATE", "ASK_QUESTION", "HOME"]}.get(self.state, ["START", "ASK_QUESTION"])
 

@@ -5,9 +5,9 @@ import { BottomNav, FabZera, HeaderItau, Tile } from '../components/ui'
 /* Tela do trigger — home do banco (design de referência) com o balão proativo da zera.ai ancorado no botão flutuante.
    O balão só aparece se a API devolveu PROACTIVE_MESSAGE (permissão ∧ gatilho ∧ oportunidade ∧ benefício validado);
    o botão flutuante fica sempre disponível: recusar a proatividade não impede pedir ajuda (quadro item 18). */
-export function Home({ nome, proativa, acordo, erro, onAbrir, onAbrirBotao, onDispensar, onRecarregar }: {
-  nome: string; proativa: Resposta | null | undefined; acordo: any | null; erro: string | null
-  onAbrir: () => void; onAbrirBotao: () => void; onDispensar: () => void; onRecarregar: () => void
+export function Home({ nome, proativa, acordo, acordos = [], erro, onAbrir, onAbrirBotao, onConversar, onDispensar, onRecarregar }: {
+  nome: string; proativa: Resposta | null | undefined; acordo: any | null; acordos?: any[]; erro: string | null
+  onAbrir: () => void; onAbrirBotao: () => void; onConversar: () => void; onDispensar: () => void; onRecarregar: () => void
 }) {
   const carregando = proativa === undefined
   const mostrar = !!proativa && !proativa.silent && proativa.response_type === 'PROACTIVE_MESSAGE'
@@ -31,7 +31,9 @@ export function Home({ nome, proativa, acordo, erro, onAbrir, onAbrirBotao, onDi
         <div className="card mt-5 p-4">
           <div className="flex items-center justify-between"><div className="flex items-center gap-2 font-semibold"><span className="h-7 w-7 rounded-lg bg-itau-blue text-white text-[9px] grid place-items-center font-bold">itaú</span> Conta corrente</div><ChevronRight className="h-5 w-5 text-ink-soft" /></div>
           <div className="mt-4 text-[15px]">Saldo</div><div className="mt-1 text-ink-soft tracking-[0.2em]">••••</div>
-          {acordo && <div className="mt-3 rounded-2xl bg-itau-orange-soft/70 p-3 text-[13px]"><span className="font-semibold text-itau-orange">zera.ai</span> · nova parcela {acordo.parcela.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês · {acordo.pagas} de {acordo.prazo} pagas</div>}
+          {acordo && (acordos.length > 1
+            ? <div className="mt-3 rounded-2xl bg-itau-orange-soft/70 p-3 text-[13px]"><span className="font-semibold text-itau-orange">zera.ai</span> · {acordos.length} acordos · {acordos.reduce((t: number, a: any) => t + a.parcela, 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês no total</div>
+            : <div className="mt-3 rounded-2xl bg-itau-orange-soft/70 p-3 text-[13px]"><span className="font-semibold text-itau-orange">zera.ai</span> · nova parcela {acordo.parcela.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês · {acordo.pagas} de {acordo.prazo} pagas</div>)}
           <div className="mt-4 border-t border-line pt-3 flex items-center justify-between text-[15px]"><span>Limite disponível</span><span className="flex items-center gap-2 text-ink-soft tracking-[0.2em]">•••• <ChevronRight className="h-4 w-4" /></span></div>
         </div>
 
@@ -53,7 +55,7 @@ export function Home({ nome, proativa, acordo, erro, onAbrir, onAbrirBotao, onDi
         )}
         <div className="h-16" />
       </div>
-      <FabZera onClick={onAbrirBotao} balao={mostrar ? { titulo: proativa!.content.title, descricao: proativa!.content.description, cta: proativa!.cta ?? 'Ver', onCta: onAbrir, onFechar: onDispensar } : undefined} />
+      <FabZera onClick={onAbrirBotao} balao={mostrar ? { titulo: proativa!.content.title, descricao: proativa!.content.description, cta: proativa!.cta ?? 'Ver', onCta: onAbrir, onFechar: onDispensar, onConversar } : undefined} />
       <BottomNav />
     </div>
   )

@@ -5,7 +5,7 @@
 
 import { ArrowUp, Check, ChevronRight, ShieldCheck, Wrench, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api'
+import { api, getCliente } from '../api'
 import { Faisca, dataBR } from '../components/ui'
 import type { CardChat, EventoChat, Hitl } from '../types'
 
@@ -54,7 +54,7 @@ type Item =
   | { k: 'card'; bloco: CardChat }
   | { k: 'hitl'; hitl: Hitl; resolvido?: 'sim' | 'nao' }
   | { k: 'guardrail'; camada: string; tipo: string }
-  | { k: 'sistema'; texto: string; detalhe?: string }
+  | { k: 'sistema'; texto: string }
 
 /* ---------- cards do motor ---------- */
 function Card({ bloco, onEnviar }: { bloco: CardChat; onEnviar: (t: string) => void }) {
@@ -138,22 +138,33 @@ function CardHitl({ hitl, resolvido, onDecidir }: { hitl: Hitl; resolvido?: 'sim
   )
 }
 
+/* A conversa sobrevive à navegação (home <-> experiência guiada <-> chat): estado por cliente fica em memória do app e a
+   sessão do ADK continua no backend — voltar para o chat retoma de onde parou, sem nova abertura. */
+const memoriaConversa = new Map<string, { sessao: string; itens: Item[]; sugestoes: string[]; protecoes: string[] }>()
+
 /* ---------- tela ---------- */
-export function Chat({ nome, onSair, onAbrirExperiencia }: { nome: string; onSair: () => void; onAbrirExperiencia: () => void }) {
-  const [itens, setItens] = useState<Item[]>([])
-  const [sugestoes, setSugestoes] = useState<string[]>([])
-  const [protecoes, setProtecoes] = useState<string[]>([])
+export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { nome: string; onSair: () => void; onAbrirExperiencia: () => void; mensagemInicial?: string }) {
+  const chave = getCliente()
+  const salva = memoriaConversa.get(chave)
+  const [itens, setItens] = useState<Item[]>(salva?.itens ?? [])
+  const [sugestoes, setSugestoes] = useState<string[]>(salva?.sugestoes ?? [])
+  const [protecoes, setProtecoes] = useState<string[]>(salva?.protecoes ?? [])
   const [texto, setTexto] = useState('')
   const [ocupado, setOcupado] = useState(false)
-  const [finops, setFinops] = useState<{ chamadas: number; tokens: number; custo: number }>({ chamadas: 0, tokens: 0, custo: 0 })
-  const sessao = useRef(`chat-${Math.random().toString(36).slice(2, 8)}`)
+  const sessao = useRef(salva?.sessao ?? `chat-${Math.random().toString(36).slice(2, 8)}`)
   const fim = useRef<HTMLDivElement>(null)
+  const inicialEnviada = useRef(false)
 
   useEffect(() => {
+    if (salva) return                                   // voltou para a conversa: retoma sem nova abertura
     api.chatInicio(sessao.current).then((r) => { setItens([{ k: 'zera', texto: r.texto }]); setSugestoes(r.sugestoes); setProtecoes(r.protecoes) })
       .catch((e) => setItens([{ k: 'sistema', texto: e instanceof Error ? e.message : 'API indisponível' }]))
   }, [])
+  useEffect(() => { memoriaConversa.set(chave, { sessao: sessao.current, itens, sugestoes, protecoes }) }, [itens, sugestoes, protecoes])
   useEffect(() => { fim.current?.scrollIntoView({ behavior: 'smooth' }) }, [itens, ocupado])
+  useEffect(() => {                                     // veio da tela guiada com um texto digitado: manda como 1ª mensagem
+    if (mensagemInicial && !inicialEnviada.current && !ocupado && (salva || itens.length > 0)) { inicialEnviada.current = true; void enviar(mensagemInicial) }
+  }, [itens, ocupado])
 
   const push = (it: Item) => setItens((l) => [...l, it])
   function tratar(e: EventoChat) {
@@ -163,8 +174,8 @@ export function Chat({ nome, onSair, onAbrirExperiencia }: { nome: string; onSai
     else if (e.tipo === 'texto') push({ k: 'zera', texto: e.texto, llm: true })
     else if (e.tipo === 'hitl') push({ k: 'hitl', hitl: e.hitl })
     else if (e.tipo === 'guardrail') push({ k: 'guardrail', camada: e.guardrail.camada, tipo: e.guardrail.tipo })
-    else if (e.tipo === 'erro') push({ k: 'sistema', texto: e.texto, detalhe: e.dica ?? e.erro })
-    else if (e.tipo === 'llm') setFinops((f) => ({ chamadas: f.chamadas + 1, tokens: f.tokens + e.tokens_entrada + e.tokens_saida, custo: f.custo + e.custo_usd }))
+    else if (e.tipo === 'erro') push({ k: 'sistema', texto: e.texto })
+    else if (e.tipo === 'llm') { /* tokens/custo ficam só no backend (Cloud Trace / Logging / Monitoring) */ }
     else if (e.tipo === 'fim') setSugestoes(e.sugestoes)
   }
   async function enviar(msg: string) {
@@ -199,7 +210,7 @@ export function Chat({ nome, onSair, onAbrirExperiencia }: { nome: string; onSai
           if (it.k === 'card') return <div key={i}><Card bloco={it.bloco} onEnviar={enviar} /></div>
           if (it.k === 'hitl') return <div key={i}><CardHitl hitl={it.hitl} resolvido={it.resolvido} onDecidir={(ok) => decidir(i, it.hitl, ok)} /></div>
           if (it.k === 'guardrail') return <div key={i} className="flex items-center gap-2 rounded-xl bg-itau-blue-soft px-3 py-2 text-[12px] text-itau-blue"><ShieldCheck className="h-4 w-4" /> Guardrail de {it.camada}: <b>{it.tipo.replace(/_/g, ' ')}</b>{it.camada === 'entrada' && ' · modelo não foi chamado'}</div>
-          return <div key={i} className="text-center text-[12px] text-danger">{it.texto}{it.detalhe && <div className="mt-1 text-[10px] text-ink-soft break-words">detalhe técnico: {it.detalhe}</div>}</div>
+          return <div key={i} className="text-center text-[12px] text-danger">{it.texto}</div>
         })}
         {ocupado && <div className="flex items-center gap-2 text-[12px] text-ink-soft"><span className="h-3.5 w-3.5 rounded-full border-2 border-itau-orange border-t-transparent animate-spin" /> zera.ai está trabalhando…</div>}
         <div ref={fim} />
@@ -210,7 +221,7 @@ export function Chat({ nome, onSair, onAbrirExperiencia }: { nome: string; onSai
           <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder={temHitlPendente ? 'Responda no card acima' : `Fale com a zera.ai, ${nome.split(' ')[0]}`} disabled={ocupado || temHitlPendente} className="flex-1 bg-transparent outline-none text-[15px] py-1 disabled:opacity-50" aria-label="Mensagem" />
           <button type="submit" disabled={!texto.trim() || ocupado || temHitlPendente} aria-label="Enviar" className="h-9 w-9 grid place-items-center rounded-full bg-itau-orange text-white disabled:opacity-40"><ArrowUp className="h-5 w-5" /></button>
         </form>
-        <div className="mt-2 flex items-center justify-center gap-2 text-[11px] text-ink-soft"><span>Resposta gerada por IA e pode ter informações imprecisas.</span>{finops.chamadas > 0 && <span className="chip bg-mist text-ink-soft" title="FinOps desta conversa">LLM {finops.chamadas}× · {finops.tokens} tokens · US$ {finops.custo.toFixed(4)}</span>}</div>
+        <div className="mt-2 flex items-center justify-center gap-2 text-[11px] text-ink-soft"><span>Resposta gerada por IA e pode ter informações imprecisas.</span></div>
       </div>
     </div>
   )

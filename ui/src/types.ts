@@ -59,6 +59,7 @@ export type Contexto = { cliente: string; persona: boolean; fonte: string; renda
 
 export type Resposta = {
   state: Estado; response_type: TipoResposta
+  agreements?: any[]; parcela_total?: number; dividas_restantes?: any[]; sinal?: any
   content: { title: string; description: string }
   options: Opcao[]; quick_replies: QuickReply[]
   allowed_actions: string[]; requires_confirmation: boolean; disclaimer?: string
@@ -74,7 +75,7 @@ export type Resposta = {
 }
 
 export type Preferencias = { analisar: boolean; momentos: boolean; recomendar: boolean; avisar: boolean; open_finance: boolean }
-export type EstadoDemo = { hoje: string; gatilhos: any[]; acordo: any | null }
+export type EstadoDemo = { hoje: string; gatilhos: any[]; acordo: any | null; acordos?: any[] }
 
 export type PerfilResumo = { cliente_id: string; nome: string; persona: boolean; medoide?: boolean; cluster: number | null; distancia: number | null
   renda_mediana: number; renda_media?: number; meses_com_renda?: number; renda_conhecida: boolean; total_dividas: number; qtd_dividas: number; meses_no_vermelho: number | null

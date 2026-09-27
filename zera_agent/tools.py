@@ -331,14 +331,22 @@ def fechar_acordo(tool_context: ToolContext, plano_id: str) -> dict:
 
 
 def status_acordo(tool_context: ToolContext) -> dict:
-    """Situação do acordo: parcelas pagas/restantes, saldo devedor, próximo vencimento, respiros."""
+    """Situação dos acordos (pode haver mais de um): parcelas pagas/restantes, saldo devedor, próximo vencimento, respiros,
+    parcela total por mês e dívidas que ainda ficaram fora de acordo (podem ser renegociadas numa nova rodada)."""
     c = _ctx(tool_context)
     acordo = c.acordo
     if acordo is None:
         return {"ok": False, "erro": "não há acordo ativo", "hoje": c.estado["hoje"]}
+    ativos = [a for a in c.acordos if a.status == "ativo"]
+    restantes = [d.to_dict() for d in c.perfil.dividas]
     resposta = {"ok": True, "hoje": c.estado["hoje"], **acordo.to_dict(),
+                "acordos_ativos": [a.to_dict() for a in ativos], "qtd_acordos": len(ativos),
+                "parcela_total_mes": round(sum(a.parcela for a in ativos), 2),
+                "dividas_fora_de_acordo": restantes,
                 "sobra_prevista_mes": c.estado.get("sobra_prevista_mes"),
-                "explicacao": f"{acordo.pagas} pagas, {acordo.restantes} restantes, saldo {acordo.saldo_devedor:.2f}."}
+                "explicacao": (f"{len(ativos)} acordo(s) ativo(s), {sum(a.parcela for a in ativos):.2f} por mês no total. "
+                               f"Mais recente: {acordo.pagas} pagas, {acordo.restantes} restantes, saldo {acordo.saldo_devedor:.2f}."
+                               + (f" {len(restantes)} dívida(s) ainda fora de acordo — pode renegociar também (montar_cenarios)." if restantes else ""))}
     resposta["numeros_permitidos"] = numeros_de(resposta)
     _ui(tool_context, "acordo", resposta)
     return resposta

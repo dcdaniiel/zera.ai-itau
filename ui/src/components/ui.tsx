@@ -93,7 +93,7 @@ export function BottomNav() {
 }
 
 /** Botão flutuante da zera.ai (faísca) + balão proativo ancorado nele. */
-export function FabZera({ onClick, balao }: { onClick: () => void; balao?: { titulo: string; descricao: string; cta: string; onCta: () => void; onFechar: () => void } }) {
+export function FabZera({ onClick, balao }: { onClick: () => void; balao?: { titulo: string; descricao: string; cta: string; onCta: () => void; onFechar: () => void; onConversar?: () => void } }) {
   return (
     <>
       {balao && (
@@ -101,7 +101,10 @@ export function FabZera({ onClick, balao }: { onClick: () => void; balao?: { tit
           <button onClick={balao.onFechar} aria-label="Fechar" className="absolute top-3 right-3 h-7 w-7 grid place-items-center rounded-full text-ink-soft active:bg-black/5"><X className="h-4 w-4" /></button>
           <div className="flex items-center gap-2 pr-6"><Faisca className="h-5 w-5" /><div className="font-bold text-[15px]">{balao.titulo}</div></div>
           <div className="mt-1 text-[13px] text-ink-soft leading-snug">{balao.descricao}</div>
-          <button onClick={balao.onCta} className="mt-3 inline-flex items-center gap-1 rounded-full bg-white px-4 py-2 text-[13px] font-bold text-itau-orange shadow-sm active:scale-95 transition">{balao.cta} <ChevronRight className="h-4 w-4" /></button>
+          <div className="mt-3 flex items-center gap-3">
+            <button onClick={balao.onCta} className="inline-flex items-center gap-1 rounded-full bg-white px-4 py-2 text-[13px] font-bold text-itau-orange shadow-sm active:scale-95 transition">{balao.cta} <ChevronRight className="h-4 w-4" /></button>
+            {balao.onConversar && <button onClick={balao.onConversar} className="text-[13px] font-bold text-ink-soft underline-offset-2 hover:underline">Conversar</button>}
+          </div>
           <span className="absolute -bottom-2 right-9 h-4 w-4 rotate-45 bg-[#FBF6F1]" />
         </div>
       )}

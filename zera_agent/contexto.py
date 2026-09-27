@@ -21,7 +21,7 @@ from motor import (
     detectar_gatilhos,
     processar_vencimentos,
 )
-from motor.modelos import PerfilFinanceiro
+from motor.modelos import Divida, PerfilFinanceiro
 
 RAIZ = Path(__file__).resolve().parent.parent
 HOJE_INICIAL = os.getenv("ZERA_HOJE", "2026-09-26")
@@ -127,12 +127,14 @@ class Contexto:
         self.perfil, self._df = carregar_perfil(cliente_id)
         self._renda_base = list(self.perfil.renda_mensal)
         self._compromissos_base = list(self.perfil.compromissos_mensal)
+        self._dividas_base = list(self.perfil.dividas)
         self.capacidade = calcular_capacidade(self.perfil, self.politica)
         self.estado: dict[str, Any] = self.repo.ler(cliente_id) or self._estado_inicial()
         self.estado.setdefault("compromissos_extras", [])
         self.estado.setdefault("memoria", {})
+        self.estado.setdefault("acordos", [self.estado["acordo"]] if self.estado.get("acordo") else [])
         self._aplicar_renda_informada()
-        self._aplicar_compromissos()
+        self._aplicar_acordos()
 
     @classmethod
     def para(cls, cliente_id: str) -> "Contexto":
@@ -151,7 +153,8 @@ class Contexto:
         gatilhos = detectar_gatilhos(self.perfil, None, hoje, creditos_recentes=creditos, politica=self.politica)
         return {
             "hoje": HOJE_INICIAL,
-            "acordo": None,
+            "acordo": None,       # acordo mais recente (compatibilidade); todos ficam em "acordos"
+            "acordos": [],        # pode haver mais de uma opção contratada (ex.: uma dívida agora, outra depois)
             "consentimentos": [],
             "gatilhos_pendentes": gatilhos,
             "eventos": [],
@@ -199,8 +202,9 @@ class Contexto:
             self.perfil.renda_mensal = list(base)
 
     def _aplicar_compromissos(self) -> None:
-        """Compromissos extras entram em todos os meses e reduzem a sobra; a capacidade é recalculada."""
-        extra = round(sum(c["valor_mensal"] for c in self.estado.get("compromissos_extras", [])), 2)
+        """Compromissos extras e parcelas dos acordos ativos entram em todos os meses e reduzem a sobra; a capacidade é recalculada."""
+        extra = round(sum(c["valor_mensal"] for c in self.estado.get("compromissos_extras", []))
+                      + sum(a.parcela for a in self.acordos if a.status == "ativo"), 2)
         base = getattr(self, "_compromissos_base", None)
         if base is None:
             self._compromissos_base = list(self.perfil.compromissos_mensal)
@@ -208,19 +212,53 @@ class Contexto:
         self.perfil.compromissos_mensal = [round(b + extra, 2) for b in base]
         self.capacidade = calcular_capacidade(self.perfil, self.politica)
 
+    def _aplicar_acordos(self) -> None:
+        """Mais de uma opção contratada: dívidas já quitadas ou renegociadas em acordo ativo saem do perfil (não entram em
+        novos cenários) e as parcelas contratadas viram compromisso fixo — a próxima jornada calcula só o que sobrou."""
+        base = getattr(self, "_dividas_base", None)
+        if base is None:
+            self._dividas_base = list(self.perfil.dividas)
+            base = self._dividas_base
+        cobertas: set[str] = set()
+        for a in self.acordos:
+            cobertas.update(q["divida_id"] for q in a.quitacoes)
+            if a.status == "ativo":
+                cobertas.update(c["divida_id"] for c in a.componentes_ativos)
+        self.perfil.dividas = [d for d in base if d.divida_id not in cobertas]
+        self._aplicar_compromissos()
+
     # --- propriedades ---
     @property
     def hoje(self) -> date:
         return date.fromisoformat(self.estado["hoje"])
 
     @property
+    def acordos(self) -> list[Acordo]:
+        return [Acordo(**a) for a in (self.estado.get("acordos") or []) if a]
+
+    @property
     def acordo(self) -> Acordo | None:
+        """Acordo ativo mais recente (as tools de respiro/amortização atuam sobre ele)."""
+        ativos = [a for a in self.acordos if a.status == "ativo"]
+        if ativos:
+            return ativos[-1]
         a = self.estado.get("acordo")
         return Acordo(**a) if a else None
 
+    @property
+    def dividas_em_acordo(self) -> list[Divida]:
+        atuais = {d.divida_id for d in self.perfil.dividas}
+        return [d for d in getattr(self, "_dividas_base", []) if d.divida_id not in atuais]
+
     def salvar(self, acordo: Acordo | None = None) -> None:
         if acordo is not None:
-            self.estado["acordo"] = asdict(acordo)
+            registro = asdict(acordo)
+            acordos = [a for a in (self.estado.get("acordos") or []) if a and a.get("acordo_id") != acordo.acordo_id]
+            acordos.append(registro)
+            self.estado["acordos"] = acordos
+            ativos = [a for a in acordos if a.get("status") == "ativo"]
+            self.estado["acordo"] = ativos[-1] if ativos else registro
+            self._aplicar_acordos()
         self.repo.gravar(self.cliente_id, self.estado)
 
     def registrar_evento(self, tipo: str, payload: dict | None = None) -> None:
@@ -239,7 +277,7 @@ class Contexto:
         self.estado = self._estado_inicial()
         self.perfil.renda_informada = None
         self._aplicar_renda_informada()
-        self._aplicar_compromissos()
+        self._aplicar_acordos()
         self.salvar()
 
     # --- relógio de simulação ---
@@ -255,11 +293,11 @@ class Contexto:
         """Avança o relógio: paga vencimentos vencidos, injeta eventos do roteiro e detecta gatilhos."""
         if ate < self.hoje:
             raise ValueError("não dá para voltar no tempo")
-        acordo = self.acordo
         eventos_pagos: list[dict] = []
-        if acordo is not None:
-            eventos_pagos = processar_vencimentos(acordo, ate)
-            self.estado["acordo"] = asdict(acordo)
+        for acordo in self.acordos:
+            if acordo.status == "ativo":
+                eventos_pagos += processar_vencimentos(acordo, ate)
+                self.salvar(acordo)
         creditos = []
         ja = {c["descricao"] for c in self.estado.get("creditos_recentes", [])}
         for ev in ROTEIRO_DEMO:
@@ -275,7 +313,7 @@ class Contexto:
         self.salvar()
         self.registrar_evento("tempo_avancado", {"ate": ate.isoformat(), "gatilhos": [g["tipo"] for g in gatilhos]})
         return {"hoje": ate.isoformat(), "pagamentos_processados": eventos_pagos, "gatilhos": gatilhos,
-                "acordo": self.estado.get("acordo")}
+                "acordo": self.estado.get("acordo"), "acordos": self.estado.get("acordos", [])}
 
     def consumir_gatilhos(self) -> list[dict]:
         g = self.estado.get("gatilhos_pendentes", [])

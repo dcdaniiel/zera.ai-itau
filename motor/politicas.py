@@ -32,6 +32,10 @@ POLITICA_PADRAO: dict = {
     "desconto_debito_automatico_pct": 0.02,  # desconto na parcela com débito automático (fictício)
     "reserva_meses_colchao": 3,     # reserva sugerida ao amortizar = min(3 colchões, 30% do extra)
     "reserva_pct_extra": 0.30,
+    # --- dados insuficientes / inferência crítica (quadro item 14: dados internos + o que a cliente confirma) ---
+    # A pergunta "tem gasto fixo fora do extrato?" só aparece quando os próprios dados sugerem que falta algo:
+    "pct_essenciais_minimo": 0.30,  # contas essenciais < 30% da renda média -> provável gasto fixo fora desta conta (aluguel, escola...)
+    "pct_sobra_suspeita": 0.55,     # sobra típica > 55% da renda média -> idem
     # --- priorização ---
     "pesos_consequencia": {"negativacao": 1000.0, "corte_servico": 500.0, "garantia": 300.0, "nenhuma": 0.0},
     "dias_atraso_consequencia": 30,  # a consequência só pesa se já há atraso relevante

@@ -1,7 +1,7 @@
 """Motor determinístico do Zera: capacidade, priorização, simulação, gatilhos."""
 
 from .alocacao import alocar_entrada, coeficiente_variacao_renda, montar_cenarios, opcoes_da_divida
-from .capacidade import calcular_capacidade, percentil
+from .capacidade import calcular_capacidade, percentil, sinais_gastos_invisiveis
 from .consolidacao import ROTULO_UI, projecao_mesmo_prazo, resumo_cenario, situacao_hoje, termos
 from .gatilhos import detectar_gatilhos
 from .modelos import Acordo, Capacidade, Divida, PerfilFinanceiro, Plano
@@ -23,7 +23,7 @@ from .simulacao import (
 __all__ = [
     "Acordo", "Capacidade", "Divida", "PerfilFinanceiro", "Plano",
     "POLITICA_PADRAO", "carregar_politica", "percentil",
-    "calcular_capacidade", "priorizar_dividas", "simular_planos", "criar_acordo", "criar_acordo_de_cenario",
+    "calcular_capacidade", "sinais_gastos_invisiveis", "priorizar_dividas", "simular_planos", "criar_acordo", "criar_acordo_de_cenario",
     "montar_cenarios", "opcoes_da_divida", "coeficiente_variacao_renda", "alocar_entrada", "instituicao_renegociavel", "pmt", "pv",
     "situacao_hoje", "resumo_cenario", "termos", "ROTULO_UI", "projecao_mesmo_prazo",
     "registrar_pagamento", "acionar_respiro", "amortizar", "processar_vencimentos",
