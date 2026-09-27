@@ -258,7 +258,6 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
           <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder={temHitlPendente ? 'Responda no card acima' : `Fale com a zera.ai, ${nome.split(' ')[0]}`} disabled={ocupado || temHitlPendente} className="flex-1 bg-transparent outline-none text-[15px] py-1 disabled:opacity-50" aria-label="Mensagem" />
           <button type="submit" disabled={!texto.trim() || ocupado || temHitlPendente} aria-label="Enviar" className="h-9 w-9 grid place-items-center rounded-full bg-itau-orange text-white disabled:opacity-40"><ArrowUp className="h-5 w-5" /></button>
         </form>
-        <div className="mt-2 flex items-center justify-center gap-2 text-[11px] text-ink-soft"><span>Resposta gerada por IA e pode ter informações imprecisas.</span></div>
       </div>
     </div>
   )
