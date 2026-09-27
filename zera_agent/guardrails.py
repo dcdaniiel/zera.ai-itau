@@ -18,6 +18,7 @@ Cada bloqueio vira evento (`guardrail_bloqueio`) para o dashboard: taxa de bloqu
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import re
@@ -38,6 +39,21 @@ ACOES_COM_CONSENTIMENTO = {"fechar_acordo", "acionar_respiro", "amortizar"}
 PADRAO_CPF = re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b")
 PADRAO_TELEFONE = re.compile(r"\(?\b\d{2}\)?\s?9?\d{4}-?\d{4}\b")
 PADRAO_CARTAO = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+PADRAO_EMAIL = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+PADRAO_TOKEN_MORSE = re.compile(r"^[.-]{1,6}$")
+PADRAO_TOKEN_BASE64 = re.compile(r"^(?=.*[A-Za-z])[A-Za-z0-9+/]{16,}={0,2}$")
+
+LIMITE_BLOQUEIOS_ESCALONAMENTO = 3
+
+# consentimento tem que vir do cliente no turno atual, não pode ser inventado pela tool
+PADRAO_CONSENTIMENTO_EXPLICITO = re.compile(
+    r"\b(sim(?:\s*,?\s*confirmo)?|confirmo|aceito|autorizo|concordo|quero\s+sim|pode\s+(?:fazer|fechar|usar|aplicar))\b",
+    re.IGNORECASE,
+)
+PADRAO_NEGACAO_CONSENTIMENTO = re.compile(
+    r"\b(n[aã]o|jamais|nunca)\b.{0,30}\b(confirmo|aceito|autorizo|concordo|quero|pode)\b",
+    re.IGNORECASE,
+)
 
 PADRAO_VULNERABILIDADE = re.compile(
     r"(n[ãa]o aguento|desesper|acabar com tudo|me matar|suic|depress|doen[çc]a grave|c[âa]ncer|internad|"
@@ -68,7 +84,26 @@ BLOQUEIOS_ENTRADA: dict[str, tuple[re.Pattern, str]] = {
         "Isso fica fora do que eu faço: eu não recomendo investimentos nem crédito novo — o foco aqui é tirar você "
         "do vermelho com o que já existe. Quer que eu mostre os cenários de renegociação que cabem no seu mês?",
     ),
+    "assunto_fora_do_dominio": (
+        re.compile(r"(conte (uma |a )?piada|escreva (um |uma )?(poema|redação|hist[óo]ria|m[úu]sica)|"
+                   r"me ajude (com|a fazer) (o |a )?(trabalho|dever|li[çc][ãa]o) de (casa|escola|faculdade)|"
+                   r"traduza (isso|esse texto|para)|receita de|previs[ãa]o do tempo|"
+                   r"qual (a |sua )?opini[ãa]o (sobre|a respeito)|quem (vai ganhar|ganhou) (a elei[çc][ãa]o|as elei[çc][õo]es)|"
+                   r"o que voc[êe] acha (do|da|de) (governo|presidente|pol[íi]tica)|me d[êe] uma dica de (filme|s[ée]rie|livro))",
+                   re.IGNORECASE),
+        "Isso não é algo que eu consigo ajudar por aqui — eu só cuido das suas dívidas e do seu acordo com o banco. "
+        "Quer ver o raio-X das suas dívidas ou os cenários que cabem no seu mês?",
+    ),
 }
+
+RESPOSTA_CONTEUDO_CODIFICADO = (
+    "Não consigo processar instruções codificadas. Para sua segurança, escreva o pedido em texto normal. "
+    "Posso ajudar com o raio-X das suas dívidas ou com uma proposta que caiba no seu mês."
+)
+RESPOSTA_ESCALONAMENTO_FORCADO = (
+    "Por segurança, vou encaminhar essa conversa para uma pessoa do time. Nenhuma ação foi executada; "
+    "alguém vai entrar em contato."
+)
 
 BLOQUEIOS_SAIDA: dict[str, tuple[re.Pattern, str]] = {
     "pressao_cobranca": (
@@ -111,9 +146,55 @@ def _resposta_fixa(texto: str) -> LlmResponse:
     return LlmResponse(content=types.Content(role="model", parts=[types.Part(text=texto)]))
 
 
+def _redigir_pii(texto: str) -> str:
+    """Remove identificadores antes de enviar ao modelo, responder ou registrar logs."""
+    texto = PADRAO_CPF.sub("[CPF removido]", texto)
+    texto = PADRAO_CARTAO.sub("[número removido]", texto)
+    texto = PADRAO_TELEFONE.sub("[telefone removido]", texto)
+    return PADRAO_EMAIL.sub("[e-mail removido]", texto)
+
+
+def _normalizar_texto(texto: str) -> str:
+    return " ".join(texto.casefold().strip().split())
+
+
+def _contem_morse(texto: str) -> bool:
+    """Ao menos 4 grupos de ponto/traço; deixa passar reticências e listas comuns."""
+    normalizado = texto.replace("–", "-").replace("—", "-")
+    tokens = re.split(r"\s+|/", normalizado.strip())
+    morse = [token for token in tokens if PADRAO_TOKEN_MORSE.fullmatch(token)]
+    return len(morse) >= 4 and sum(len(token) for token in morse) >= 8
+
+
+def _contem_base64(texto: str) -> bool:
+    """Só conta se o token realmente decodificar em texto legível (evita falso positivo em ids/hashes)."""
+    for token in re.split(r"\s+", texto.strip()):
+        token = token.strip(".,;:!?")
+        if not PADRAO_TOKEN_BASE64.fullmatch(token):
+            continue
+        try:
+            decodificado = base64.b64decode(token, validate=True)
+        except Exception:
+            continue
+        if not decodificado:
+            continue
+        imprimiveis = sum(1 for b in decodificado if 32 <= b <= 126)
+        if imprimiveis / len(decodificado) >= 0.85:
+            return True
+    return False
+
+
+def _conteudo_codificado(texto: str) -> str | None:
+    if _contem_morse(texto):
+        return "conteudo_codificado_morse"
+    if _contem_base64(texto):
+        return "conteudo_codificado_base64"
+    return None
+
+
 def _registrar_bloqueio(state, ctx: Contexto | None, camada: str, tipo: str, trecho: str = "") -> None:
     bloqueios = list(state.get("bloqueios_guardrail") or [])
-    bloqueios.append({"camada": camada, "tipo": tipo, "trecho": trecho[:80]})
+    bloqueios.append({"camada": camada, "tipo": tipo, "trecho": _redigir_pii(trecho)[:80]})
     state["bloqueios_guardrail"] = bloqueios[-50:]
     log.warning("guardrail %s bloqueou: %s", camada, tipo)
     if ctx is not None:
@@ -161,6 +242,10 @@ def guardrail_entrada(callback_context: CallbackContext, llm_request: LlmRequest
     cliente_id = state.get("cliente_id", "cli_001")
     ctx = Contexto.para(cliente_id)
 
+    # function_response também vem com role="user" no Gemini, então exige texto de verdade
+    _ultimo = llm_request.contents[-1] if llm_request.contents else None
+    novo_turno = bool(_ultimo and _ultimo.role == "user" and any(p.text for p in (_ultimo.parts or [])))
+
     # última mensagem do usuário (texto)
     ultima_parts, ultima = [], ""
     for content in reversed(llm_request.contents or []):
@@ -169,8 +254,34 @@ def guardrail_entrada(callback_context: CallbackContext, llm_request: LlmRequest
             ultima = " ".join(p.text or "" for p in ultima_parts)
             break
 
+    # redige PII antes de qualquer classificação/log
+    for content in llm_request.contents or []:
+        if content.role != "user":
+            continue
+        for part in content.parts or []:
+            if part.text:
+                novo = _redigir_pii(part.text)
+                if novo != part.text:
+                    state["pii_redigida"] = state.get("pii_redigida", 0) + 1
+                    part.text = novo
+    if ultima_parts and novo_turno:
+        ultima = " ".join(p.text or "" for p in ultima_parts)
+        state["ultima_mensagem_usuario"] = ultima
+        state["turno_usuario"] = state.get("turno_usuario", 0) + 1
+        # autoriza somente números devolvidos por tools neste turno
+        state["ultimos_numeros"] = []
+
     # 1) BLOQUEIO: fortes indícios de pergunta problemática -> resposta fixa, modelo não é chamado
-    if ultima:
+    if ultima and novo_turno:
+        total_bloqueios = len(state.get("bloqueios_guardrail") or []) + state.get("bloqueios_consentimento", 0)
+        if total_bloqueios >= LIMITE_BLOQUEIOS_ESCALONAMENTO:
+            state["escalonamento_forcado"] = True
+            ctx.registrar_evento("escalado_humano", {"motivo": "bloqueios_guardrail_repetidos"})
+            return _resposta_fixa(RESPOSTA_ESCALONAMENTO_FORCADO)
+        tipo_codificado = _conteudo_codificado(ultima)
+        if tipo_codificado:
+            _registrar_bloqueio(state, ctx, "entrada", tipo_codificado, "[codificado omitido]")
+            return _resposta_fixa(RESPOSTA_CONTEUDO_CODIFICADO)
         armor = _model_armor(ultima, "entrada")
         if armor and armor[0]:
             _registrar_bloqueio(state, ctx, "entrada", f"model_armor:{armor[1]}", ultima)
@@ -181,27 +292,14 @@ def guardrail_entrada(callback_context: CallbackContext, llm_request: LlmRequest
                 _registrar_bloqueio(state, ctx, "entrada", tipo, m.group(0))
                 return _resposta_fixa(resposta)
 
-    # 2) PII: redige CPF/telefone/cartão em TODAS as mensagens do usuário (P1: Sensitive Data Protection)
-    for content in llm_request.contents or []:
-        if content.role != "user":
-            continue
-        for part in content.parts or []:
-            if part.text:
-                novo = PADRAO_CPF.sub("[CPF removido]", part.text)
-                novo = PADRAO_CARTAO.sub("[número removido]", novo)
-                novo = PADRAO_TELEFONE.sub("[telefone removido]", novo)
-                if novo != part.text:
-                    state["pii_redigida"] = state.get("pii_redigida", 0) + 1
-                    part.text = novo
-
-    # 3) vulnerabilidade: não bloqueia — muda o tom e pede escalonamento
+    # 2) vulnerabilidade: não bloqueia — muda o tom e pede escalonamento
     instrucoes: list[str] = []
     if PADRAO_VULNERABILIDADE.search(ultima):
         state["vulneravel"] = True
         instrucoes.append("ATENÇÃO: o cliente demonstrou sinal de vulnerabilidade. Acolha em uma frase, NÃO negocie, "
                           "não apresente planos, e ofereça falar com uma pessoa chamando escalar_humano.")
 
-    # 4) contexto: data simulada, memória, acordo e gatilhos pendentes
+    # 3) contexto: data simulada, memória, acordo e gatilhos pendentes
     instrucoes.append(f"DATA DE HOJE (simulada): {ctx.estado['hoje']}. Cliente: {ctx.perfil.nome} (id {cliente_id}).")
     memoria = ctx.estado.get("memoria") or {}
     if memoria:
@@ -233,6 +331,23 @@ def exigir_consentimento(tool: BaseTool, args: dict[str, Any], tool_context: Too
     tool roda, com `tool_context.tool_confirmation.confirmed`. Recusa no app => a ação não executa e o agente é avisado.
     """
     nome = tool.name
+    if nome == "registrar_consentimento":
+        frase = str(args.get("frase_cliente") or "")
+        ultima = str(tool_context.state.get("ultima_mensagem_usuario") or "")
+        frase_norm, ultima_norm = _normalizar_texto(frase), _normalizar_texto(ultima)
+        valido = (
+            bool(frase_norm)
+            and frase_norm == ultima_norm
+            and bool(PADRAO_CONSENTIMENTO_EXPLICITO.search(ultima))
+            and not PADRAO_NEGACAO_CONSENTIMENTO.search(ultima)
+            and args.get("acao") in ACOES_COM_CONSENTIMENTO
+        )
+        if not valido:
+            tool_context.state["bloqueios_consentimento"] = tool_context.state.get("bloqueios_consentimento", 0) + 1
+            return {
+                "erro": "consentimento_invalido",
+                "instrucao": "Não registre consentimento em nome do cliente. Peça confirmação explícita e use exatamente a última resposta dele.",
+            }
     if nome == "amortizar" and not args.get("aplicar"):
         return None  # simulação não precisa de consentimento
     if nome not in ACOES_COM_CONSENTIMENTO:
@@ -294,8 +409,8 @@ def guardrail_saida(callback_context: CallbackContext, llm_response: LlmResponse
             _registrar_bloqueio(state, ctx, "saida", tipo, m.group(0))
             return _resposta_fixa(resposta)
 
-    # 2) PII na saída: redige (o agente nunca deve ecoar CPF/cartão)
-    novo = PADRAO_CARTAO.sub("[número removido]", PADRAO_CPF.sub("[CPF removido]", texto))
+    # 2) PII na saída: o agente nunca deve ecoar identificadores
+    novo = _redigir_pii(texto)
     alterado = novo != texto
     if alterado:
         _registrar_bloqueio(state, ctx, "saida", "pii_redigida", "")
@@ -311,6 +426,12 @@ def guardrail_saida(callback_context: CallbackContext, llm_response: LlmResponse
             for m in list(PADRAO_DINHEIRO.finditer(novo))[::-1]:
                 if not _permitido(_para_float(m.group(1)), permitidos):
                     novo = novo[:m.start()] + "[valor a confirmar]" + novo[m.end():]
+            for m in list(PADRAO_PCT.finditer(novo))[::-1]:
+                if not _permitido(_para_float(m.group(1)), permitidos):
+                    novo = novo[:m.start()] + "[percentual a confirmar]" + novo[m.end():]
+            for m in list(PADRAO_PRAZO.finditer(novo))[::-1]:
+                if not _permitido(float(m.group(1)), permitidos):
+                    novo = novo[:m.start()] + "[prazo a confirmar]" + novo[m.end():]
             novo += "\n\n(Alguns valores acima precisam ser confirmados; vou verificar na calculadora antes de seguir.)"
             alterado = True
     return _resposta_fixa(novo) if alterado else None
