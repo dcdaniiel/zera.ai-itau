@@ -241,7 +241,7 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
         )}
         {itens.map((it, i) => {
           if (it.k === 'cliente') return <div key={i} className="ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-itau-orange text-white px-3 py-2 text-[14px]">{it.texto}</div>
-          if (it.k === 'zera') return <div key={i} className="max-w-[92%] rounded-2xl rounded-bl-md bg-white border border-line px-3 py-2 text-[14px] leading-relaxed"><Texto texto={it.texto} />{it.llm && <div className="mt-1 text-[10px] text-ink-soft">Gemini · números conferidos com o motor pelos guardrails</div>}</div>
+          if (it.k === 'zera') return <div key={i} className="max-w-[92%] rounded-2xl rounded-bl-md bg-white border border-line px-3 py-2 text-[14px] leading-relaxed"><Texto texto={it.texto} />{it.llm}</div>
           if (it.k === 'tools') return <div key={i} className="flex flex-wrap gap-1.5">{it.chips.map((c, j) => c.erro === 'renda_desconhecida'
             ? <span key={j} className="chip text-[11px] bg-itau-orange-soft text-itau-orange"><Wrench className="h-3 w-3" /> {ROTULO_TOOL[c.nome] ?? c.nome}: preciso da sua renda</span>
             : <span key={j} className={`chip text-[11px] ${c.ok === false ? 'bg-danger-soft text-danger' : c.ok ? 'bg-ok-soft text-ok' : 'bg-mist text-ink-soft'}`}><Wrench className="h-3 w-3" /> {ROTULO_TOOL[c.nome] ?? c.nome}{c.ok === undefined ? '…' : c.ok ? ' ✓' : ' ✗'}</span>)}</div>
