@@ -12,6 +12,24 @@
 
 ---
 
+
+> **Atualização v1.0 (26/09, noite) — o que vale para a submissão.** Este PRD nasceu de manhã; as seções abaixo marcadas com
+> "(v0.5 — substituído)" descrevem a primeira versão do motor (desconto no principal, dinheiro extra como gatilho principal,
+> persona sintética). O que está implementado e demonstrado agora:
+>
+> | Tema | v1.0 (implementado) |
+> |---|---|
+> | **Cálculo** | Princípio **"ambos ganham"**: saldo devedor integral (sem desconto no principal), taxa de renegociação 1,8% a.m., prazos 12–60x; dinheiro extra vira **entrada** (quita a dívida mais cara que couber e abate a seguinte). Cliente: parcela menor, taxa menor, data para acabar, nome limpo. Banco: saldo + juros do acordo. "Hoje" mostra pagamentos/mês, saldo devedor, juros/mês e "sem prazo" — nunca um "total a pagar" projetado. |
+> | **Gatilho da demo** | **Entrada no rotativo** (quadro de produto, item 11); 13º/FGTS/IRPF como gatilho secundário (relógio da demo: dez/26 e mai/27). |
+> | **Dados** | **Nenhum dado mockado.** Perfis reais da base do evento: cluster-alvo por k-means (BigQuery ML, `dados/sql/clusterizacao.sql`) ou segmentação por regras na amostra exportada; o cliente mais típico do segmento recebe o nome "Cleide". Dívidas inferidas do extrato são rotuladas; renda ausente → a zera.ai pergunta. A persona sintética existe só como fixture de teste. |
+> | **Fluxo** | Máquina de estados com roteamento determinístico de intenção antes do LLM; "nenhuma opção" com diagnóstico e caminhos (ajustar gasto, informar entrada, pessoa, recalcular); todo estado × ação tem transição (teste de matriz); só o botão CONFIRM contrata. |
+> | **Observabilidade/FinOps** | OTel (ADK → Telemetry API → Cloud Trace/Monitoring), logs JSON (Cloud Logging), `/metrics` com p50/p95 por etapa, tokens e custo por chamada/jornada, `zera.telemetria`, orçamento de billing. |
+> | **Produção** | Cloud Run (SA dedicada, IAM mínimo, imagem sem root), `infra/deploy_app.sh`, `infra/observabilidade.sh`, Model Armor via `infra/setup_gcp.sh`. |
+>
+> Números atuais do perfil mais típico (renda ~R$ 2.325, dívidas R$ 6.800): hoje R$ 900/mês, R$ 641/mês só de juros, sem prazo →
+> recomendada 48x R$ 212,77 (total R$ 10.213 = R$ 6.800 + R$ 3.413 de juros); 36x R$ 258 (menor custo); 60x R$ 186 (menor parcela).
+> Com 13º de R$ 2.800: quita o cheque especial, abate R$ 1.784 do cartão, 24x R$ 212,73 (total R$ 7.789). Desenho completo: `docs/arquitetura-c4.md`.
+
 ## 0. TL;DR
 
 A Cleide já está endividada e negativada. O Zera parte daí: **detecta a anomalia de entrada** (FGTS, 13º, restituição, renda extra) e decide, **dívida por dívida**, o que **quitar à vista com desconto**, o que **renegociar em 12x / 18x / 24x / 36x** e o que manter — dentro da realidade financeira dela (sobra real, parcela de conforto, meses fracos com respiro) — para **sair da negativação** sem quebrar o acordo. Sem dinheiro extra, o mesmo motor monta a renegociação que cabe.
@@ -55,7 +73,7 @@ Pesos da banca: Arquitetura/Eng/Dados **50%**, Negócio **30%**, Design **20%**.
 
 ---
 
-## 2. Persona e cenário da demo (dados fictícios)
+## 2. Persona e cenário da demo (dados fictícios) *(v0.5 — substituído; ver "Atualização v1.0" no topo e docs/arquitetura-c4.md)*
 
 **Cleide Souza, 52, diarista, São Paulo.** Renda irregular entre R$ 1.750 e R$ 2.700/mês (mediana ≈ R$ 2.325). Três dívidas em três canais do próprio Itaú; cobranças chegam separadas (SMS, app, telefone). Quebrou um acordo em 2025 no 3º mês porque a parcela não cabia. Tem medo de renegociar de novo. Não tem reserva.
 
@@ -106,7 +124,7 @@ Pesos da banca: Arquitetura/Eng/Dados **50%**, Negócio **30%**, Design **20%**.
 
 ---
 
-## 4. Roteiro da demo (5 min)
+## 4. Roteiro da demo (5 min) *(v0.5 — substituído; ver "Atualização v1.0" no topo e docs/arquitetura-c4.md)*
 
 | Tempo | Tela | O que acontece / fala do agente |
 |---|---|---|
@@ -367,7 +385,7 @@ Cleide (saída real do motor): sobra_p25 592,50 → colchão 116,25 → sobra_se
 ### 9.4 Priorização (`priorizar_dividas`)
 `score = custo_mensal (saldo × taxa) + peso_consequencia` (negativação iminente +∞ relativo, corte de serviço alto, garantia médio). Saída explicável: "1º cartão: custa ≈ R$ 448/mês; 2º cheque especial: ≈ R$ 72/mês; 3º empréstimo: ≈ R$ 122/mês, mas 2 parcelas atrasadas — entra no acordo para evitar negativação".
 
-### 9.5 Alocação por dívida (`montar_cenarios` — o coração do Zera)
+### 9.5 Alocação por dívida (`montar_cenarios` — o coração do Zera) *(v0.5 — substituído; ver "Atualização v1.0" no topo e docs/arquitetura-c4.md)*
 Entrada: dívidas (saldo, taxa, atraso, consequência), capacidade (parcela máxima, colchão, respiros), dinheiro extra V (0 se não houver).
 - **Opções por dívida**: `quitar` (à vista com desconto da faixa de atraso, usa caixa) · `renegociar_N` para N ∈ {12, 18, 24, 36} (Price a 1,5% a.m. sobre o saldo com desconto "parcelado") · `manter` (só dívida em dia; custo = 12 meses de juros; não resolve atraso).
 - **Caixa** = V − reserva mínima (colchão, se o cliente não tem reserva). Sobra de caixa vira reserva.
@@ -376,7 +394,7 @@ Entrada: dívidas (saldo, taxa, atraso, consequência), capacidade (parcela máx
 - Cleide, V = 2.800: 55 combinações viáveis → quitar cartão (R$ 2.560) + empréstimo 18x (R$ 158,49) + cheque 12x (R$ 82,51) = R$ 241/mês.
 - **Acordo com componentes**: cada renegociação vira um componente (parcela, prazo, saldo próprios); a parcela total cai quando um componente termina (12x do cheque acaba antes dos 18x do empréstimo); respiro adia o mês inteiro; amortização ataca o componente de maior saldo.
 
-### 9.6 Planos consolidados (`simular_planos`, visão simplificada)
+### 9.6 Planos consolidados (`simular_planos`, visão simplificada) *(v0.5 — substituído; ver "Atualização v1.0" no topo e docs/arquitetura-c4.md)*
 - Consolida saldo total; aplica **política de desconto por faixa de atraso** (parametrizada, fictícia): 0–30 dias 0%; 31–90 até 20% dos encargos; 91–180 até 40%; >180 até 60%; à vista +15 p.p.
 - **Plano A — à vista**: saldo com desconto máximo; `cabe` só se `dinheiro_extra ≥ valor`.
 - **Plano B — parcela que cabe**: Price com `taxa_mensal_renegociacao` (≈ 1,5% a.m.); prazo = menor n tal que parcela ≤ `parcela_maxima`, limitado a `prazo_max` (48). Se não cabe em 48x → `cabe=false` e o agente escala.
