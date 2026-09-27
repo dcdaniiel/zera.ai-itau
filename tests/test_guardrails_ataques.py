@@ -197,8 +197,7 @@ def test_saida_redige_pii_e_substitui_numero_inventado():
                                    ("text", "Seu CPF 123.456.789-09 deve R$ 6.800,00; e você ganhou R$ 123,45 hoje.")]}
     respostas, estado, llm = _conversa(roteiro, ["quanto eu devo?"])
     r = respostas[-1]
-    assert "123.456.789-09" not in r and "[CPF removido]" in r
-    assert "6.800,00" in r and "123,45" not in r and "[valor a confirmar]" in r
+    assert "123.456.789-09" not in r and "123,45" not in r and "pessoa do time" in r   # PII e número inventado nunca chegam
     tipos = [b["tipo"] for b in estado["bloqueios_guardrail"]]
     assert "pii_redigida" in tipos and "numero_fora_das_tools" in tipos
 
@@ -208,28 +207,30 @@ def test_saida_redige_telefone_email_percentual_e_prazo_inventados():
     respostas, estado, llm = _conversa({"oi": [("text", resposta)]}, ["oi"])
     r = respostas[-1]
     assert "98765-4321" not in r and "teste@exemplo.com" not in r
-    assert "[telefone removido]" in r and "[e-mail removido]" in r
     assert "99%" not in r and "77x" not in r
-    assert "[percentual a confirmar]" in r and "[prazo a confirmar]" in r
+    assert "pessoa do time" in r and "confirmar]" not in r            # sem texto rasurado: acolhe e oferece uma pessoa
+    assert estado["bloqueios_guardrail"][-1]["tipo"] == "numero_fora_das_tools"
 
 
-def test_numeros_de_turno_anterior_nao_ficam_autorizados():
+def test_numeros_de_turnos_anteriores_valem_ate_o_estado_mudar():
+    """"Quais dívidas tenho?" pode ser respondido do contexto: os números vieram das tools nesta sessão. Depois que uma
+    tool muda o estado (renda informada, acordo…), os números antigos caducam e o modelo precisa reconsultar."""
     roteiro = {
-        "quanto eu devo?": [("call", "get_perfil_financeiro", {}),
-                            ("text", "Você deve R$ 6.800,00.")],
+        "quanto eu devo?": [("call", "get_perfil_financeiro", {}), ("text", "Você deve R$ 6.800,00.")],
         "oi": [("text", "Sem consultar de novo: você deve R$ 6.800,00.")],
+        "minha renda mudou para 3000": [("call", "informar_renda", {"valor_mensal": 3000}),
+                                        ("text", "Anotei R$ 3.000. Sua parcela máxima continua R$ 6.800,00.")],   # 6.800 caducou (estado mudou)
     }
-    respostas, estado, llm = _conversa(roteiro, ["quanto eu devo?", "oi"])
-    assert "R$ 6.800,00" in respostas[0]
-    assert "R$ 6.800,00" not in respostas[1]
-    assert "[valor a confirmar]" in respostas[1]
+    respostas, estado, llm = _conversa(roteiro, ["quanto eu devo?", "oi", "minha renda mudou para 3000"])
+    assert "R$ 6.800,00" in respostas[0] and "R$ 6.800,00" in respostas[1]          # mesmo número, mesma sessão: válido
+    assert "R$ 6.800,00" not in respostas[2] and "pessoa do time" in respostas[2]   # após informar_renda: caducou -> acolhe
 
 
 def test_falha_de_tool_nao_autoriza_numero_inventado():
     roteiro = {"compara o plano Z": [("call", "comparar_com_padrao", {"plano_id": "Z"}),
                                      ("text", "O plano Z teria uma parcela de R$ 999,00.")]}
     respostas, estado, llm = _conversa(roteiro, ["compara o plano Z"])
-    assert "R$ 999,00" not in respostas[-1] and "[valor a confirmar]" in respostas[-1]
+    assert "R$ 999,00" not in respostas[-1] and "pessoa do time" in respostas[-1]
     assert 999.0 not in (estado.get("ultimos_numeros") or [])
 
 

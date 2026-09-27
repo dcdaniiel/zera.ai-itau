@@ -151,7 +151,8 @@ C4Component
 | `GET /v1/clientes/{id}/experiencia` · `POST …/experiencia/evento` | resposta atual · ação → resposta estruturada | só ASK_WHY/ASK_QUESTION |
 | `GET /chat/inicio` | abertura determinística da conversa: contexto (gatilho, renda desconhecida, acordo ativo), 3 proteções e sugestões (direcionamento) | não |
 | `POST /chat` · `POST /chat/stream` | conversa com o agente ADK; o stream é NDJSON com um evento por linha: `llm` (tokens/custo) · `tool_call` · `tool_result` · `card` (raio_x, capacidade, prioridades, cenarios, planos, acordo, amortizacao) · `texto` · `hitl` · `guardrail` · `fim` (sugestões, FinOps, acordo) | sim |
-| `POST /chat/confirmar` · `POST /chat/confirmar/stream` | HITL: devolve ao ADK a decisão humana (`request_id`, `confirmed`, `frase`) como `FunctionResponse(adk_request_confirmation)` → a tool pausada executa (ou é recusada) | sim |
+| `POST /chat/contratar` | botão "Contratar" do card de cenários: gatilho determinístico — valida o cenário na sessão e devolve o card HITL (`request_id` `btn_…`) com os números do motor | não |
+| `POST /chat/confirmar` · `POST /chat/confirmar/stream` | HITL: `request_id` do ADK → devolve a decisão humana como `FunctionResponse(adk_request_confirmation)` e a tool pausada executa (ou é recusada); `request_id` `btn_…` → o motor executa direto (consentimento `canal=botao_app`) e a mesma sequência de eventos é emitida | só na via do ADK |
 | `POST /simular_tempo` · `GET /gatilhos/{id}` · `POST /reset/{id}` | relógio da demo · gatilhos · reset (LGPD) | não |
 
 ### 3e. UI (`ui/src`)
@@ -241,6 +242,10 @@ guardado na sessão, nunca o texto do modelo) e o app responde em `/chat/confirm
 adk_request_confirmation, response={confirmed, payload{frase_cliente}})`; só então a tool roda, registrando o consentimento com
 `canal=hitl_app` e a frase. Recusa → `before_tool` devolve `acao_recusada` e a tool não roda (`bloqueios_consentimento++`). Métricas:
 `zera.hitl_pedido{tool}` e `zera.hitl_resposta{confirmed}`. "Sim" digitado nunca contrata — só o botão.
+
+**Compreensão de contexto antes do agente**: cumprimento/agradecimento/despedida têm resposta determinística (0 tokens, sem tools);
+a sequência Entender → Opções → Escolher → Confirmar no app → Acompanhar é emitida como eventos `etapa` (derivados das tools chamadas e do HITL)
+e só avança quando a cliente pede a ação — o prompt proíbe rodar a bateria de tools sem pedido.
 
 **Interação visível e rápida**: `/chat/stream` devolve cada evento do Runner assim que acontece — o app mostra o chip da tool
 ("calculando capacidade…"), o card com o resultado do motor (`state_delta.ui`), o texto final, o card HITL e o selo de guardrail, com

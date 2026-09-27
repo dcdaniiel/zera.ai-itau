@@ -14,7 +14,7 @@ dados/        loader (BigQuery | amostra real | fixture), segmentação por regr
 zera_agent/   experiencia.py (máquina de estados + contrato estruturado + roteamento de intenção), agente ADK, tools, guardrails, contexto, observabilidade (OTel/logs/métricas/FinOps)
 api/          FastAPI: /v1/clientes (perfis do BQ), experiência (spec v1), /chat/inicio + /chat/stream + /chat/confirmar (agente ADK com HITL nativo, NDJSON), /health /ready /metrics — serve a UI buildada
 ui/           app mobile (React + Vite + Tailwind, paleta Itaú): perfis → onboarding → preferências → home (trigger) → experiência de 10 telas | conversa com o agente (cards, HITL, guardrails)
-tests/        85 testes sem rede (motor, fluxo ponta a ponta, agente com HITL, API de chat, guardrails, dados); tests/fixtures = perfil sintético SÓ para testes
+tests/        87 testes sem rede (motor, fluxo ponta a ponta, agente com HITL, API de chat, guardrails, dados); tests/fixtures = perfil sintético SÓ para testes
 infra/        setup GCP (dados + Model Armor), deploy Cloud Run (produção), observabilidade/FinOps, Agent Engine
 ```
 
@@ -39,7 +39,7 @@ pip install -r requirements.txt            # ou: uv sync
 cp zera_agent/env.demo zera_agent/.env     # lido automaticamente (adk web, uvicorn, pytest); ZERA_FONTE=amostra roda sem credenciais | bigquery (após publicar_bq)
 unset GOOGLE_CLOUD_LOCATION                # variável exportada no shell tem precedência sobre o .env (e o app avisa); gemini-3.x é servido em "global"
 gcloud auth application-default login      # para o Gemini responder "por que essa opção?" e as perguntas livres
-uv run pytest -q                           # 85 testes, sem rede (ou: pytest -q com o venv ativo)
+uv run pytest -q                           # 87 testes, sem rede (ou: pytest -q com o venv ativo)
 uv run uvicorn api.main:app --reload --port 8080   # API (+ serve ui/dist se existir)
 cd ui && npm install && npm run dev        # http://localhost:5173 — /api vai para :8080
 ```
@@ -53,7 +53,13 @@ A observabilidade (traces, métricas, tokens/custo, logs) fica só no backend �
 ou só o acompanhamento do acordo); o balão e a experiência guiada têm o link "Conversar"; depois do acordo, digitar na tela guiada
 cai na conversa. A conversa persiste ao navegar (mesma sessão do ADK). Pode haver **mais de uma opção contratada**: o que ficou fora
 do acordo (ou uma dívida nova) abre outra jornada — a parcela já contratada vira compromisso fixo e os acordos ficam listados.
-A pergunta "tem gasto fixo fora do extrato?" só aparece quando os dados sugerem (essenciais < 30% da renda ou sobra > 55%), com os números reais. A abertura é determinística (contexto + 3 proteções + sugestões de próximo passo);
+A pergunta "tem gasto fixo fora do extrato?" só aparece quando os dados sugerem (essenciais < 30% da renda ou sobra > 55%), com os números reais.
+No chat, a sequência (Entender → Opções → Escolher → **Confirmar no app** → Acompanhar) só aparece e avança quando a cliente pede cada etapa;
+cumprimentos e agradecimentos são respondidos sem modelo nem tools. Cada opção do card tem o botão **Contratar** (gatilho determinístico:
+`POST /chat/contratar` abre o card de confirmação com os números do motor e `POST /chat/confirmar` executa) — a melhor opção fica destacada e,
+se ela pedir um valor ("parcela até 600"), `montar_cenarios(parcela_alvo)` marca as que atendem ou diz a menor possível e a entrada necessária.
+Números das tools valem para a sessão inteira (caducam quando o estado muda); número inventado pelo modelo nunca chega à cliente — ela recebe
+uma mensagem acolhedora com "falar com uma pessoa" em primeiro lugar, e o bloqueio fica só na observabilidade do backend. A abertura é determinística (contexto + 3 proteções + sugestões de próximo passo);
 cada mensagem vai para o agente ADK via `/chat/stream` e a tela mostra, conforme acontecem, os chips de tool (`informar_renda` /
 `informar_gasto_fixo` quando você diz um valor), os cards do motor
 (raio-X, capacidade, prioridades, cenários com "Quero esta", planos, acordo), o texto, o selo de guardrail e o custo do turno.

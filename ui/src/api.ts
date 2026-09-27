@@ -1,7 +1,7 @@
 /* Cliente HTTP da API zera.ai (api/main.py). Sem mock: toda tela vem do backend (núcleo determinístico + agente + BigQuery).
    Em dev, /api é proxied pelo Vite para http://localhost:8080; em produção a própria API serve a UI (mesma origem). */
 
-import type { Acao, ChatInicio, Clientes, EstadoDemo, EventoChat, Perfil, Preferencias, Resposta } from './types'
+import type { Acao, ChatInicio, Clientes, EstadoDemo, EventoChat, Hitl, Perfil, Preferencias, Resposta } from './types'
 
 const BASE = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? '/api' : '')
 const SESSAO_ID = `ui-${Math.random().toString(36).slice(2, 8)}`
@@ -63,6 +63,7 @@ export const api = {
   chatInicio: (sessaoId: string) => req<ChatInicio>(`/chat/inicio?cliente_id=${encodeURIComponent(clienteId)}&sessao_id=${encodeURIComponent(sessaoId)}`),
   chatStream: (sessaoId: string, mensagem: string, onEvento: (e: EventoChat) => void) =>
     stream('/chat/stream', { cliente_id: clienteId, sessao_id: sessaoId, mensagem }, onEvento),
+  chatContratar: (sessaoId: string, cenario_id: string) => req<{ hitl: Hitl; etapa: string }>('/chat/contratar', { method: 'POST', body: JSON.stringify({ cliente_id: clienteId, sessao_id: sessaoId, cenario_id }) }),
   chatConfirmar: (sessaoId: string, request_id: string, confirmed: boolean, frase: string, onEvento: (e: EventoChat) => void) =>
     stream('/chat/confirmar/stream', { cliente_id: clienteId, sessao_id: sessaoId, request_id, confirmed, frase }, onEvento),
 }

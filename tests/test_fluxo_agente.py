@@ -77,8 +77,8 @@ def test_raio_x_e_guardrail_de_numeros():
     }
     runner, llm = _runner(roteiro)
     respostas, estado = asyncio.run(_conversar(runner, ["quanto eu devo?"]))
-    assert "6.800,00" in respostas[-1] and "999,99" not in respostas[-1]   # número inventado é substituído
-    assert estado["alucinacao_numerica"] == 1          # só o 999,99 é estranho
+    assert "999,99" not in respostas[-1] and "pessoa do time" in respostas[-1]   # número inventado nunca chega: acolhe e oferece uma pessoa
+    assert estado["alucinacao_numerica"] == 1 and estado["escalar_sugerido"] is True   # só o 999,99 é estranho
     assert 6800.0 in estado["ultimos_numeros"] and 14.0 in estado["ultimos_numeros"]
     assert [b["tipo"] for b in estado["ui"]] == ["raio_x", "prioridades"]
 
@@ -86,9 +86,9 @@ def test_raio_x_e_guardrail_de_numeros():
 def test_hitl_pausa_sem_confirmacao_e_executa_com_confirmacao():
     roteiro = {
         "quero o plano C": [
-            ("call", "simular_planos", {}),
-            ("call", "fechar_acordo", {"plano_id": "C"}),          # pausa: confirmação humana no app (HITL nativo do ADK)
-            ("text", "Fechado: 29x de R$ 303,04, primeira parcela em 10/10."),
+            ("call", "montar_cenarios", {"valor_extra": 0}),
+            ("call", "fechar_acordo", {"plano_id": "C1"}),         # pausa: confirmação humana no app (HITL nativo do ADK)
+            ("text", "Fechado: 36x de R$ 258,30, primeira parcela em 10/10."),
         ],
     }
     runner, _ = _runner(roteiro)
@@ -102,9 +102,9 @@ def test_hitl_pausa_sem_confirmacao_e_executa_com_confirmacao():
     runner, _ = _runner(roteiro)
     respostas, estado = asyncio.run(_conversar(runner, ["quero o plano C"], confirmar=True))
     ctx = Contexto.para(CLIENTE)
-    assert ctx.acordo is not None and ctx.acordo.status == "ativo" and ctx.acordo.parcela == 303.04
+    assert ctx.acordo is not None and ctx.acordo.status == "ativo" and ctx.acordo.plano_id == "C1" and ctx.acordo.parcela > 0
     assert ctx.estado["consentimentos"][-1]["canal"] == "hitl_app" and ctx.estado["consentimentos"][-1]["frase_cliente"] == "Confirmo"
-    assert "303,04" in respostas[-1] and estado.get("alucinacao_numerica", 0) == 0
+    assert "258,30" in respostas[-1] and estado.get("alucinacao_numerica", 0) == 0   # número do acordo veio da tool
 
 
 def test_gatilho_de_respiro_apos_avancar_tempo():
@@ -149,4 +149,4 @@ def test_modo_estrito_substitui_numero_inventado(monkeypatch):
     roteiro = {"quanto eu devo?": [("call", "get_perfil_financeiro", {}), ("text", "Você deve R$ 6.800,00 e ganhou R$ 123,45.")]}
     runner, llm = _runner(roteiro)
     respostas, estado = asyncio.run(_conversar(runner, ["quanto eu devo?"]))
-    assert "[valor a confirmar]" in respostas[-1] and "6.800,00" in respostas[-1]
+    assert "123,45" not in respostas[-1] and "pessoa do time" in respostas[-1]

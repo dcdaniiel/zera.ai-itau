@@ -209,18 +209,44 @@ def simular_planos(tool_context: ToolContext, dinheiro_extra: float = 0.0) -> di
     return resposta
 
 
-def montar_cenarios(tool_context: ToolContext, valor_extra: float = 0.0) -> dict:
-    """PRINCIPAL: dado o dinheiro extra disponível (FGTS, 13º, restituição, renda extra — ou 0), monta os cenários
-    por dívida: qual quitar à vista com desconto, qual renegociar em 12x/18x/24x/36x e qual manter, respeitando
-    a parcela máxima, a parcela de conforto do perfil (renda irregular) e os respiros. Devolve o recomendado
-    (mais barato dentro do conforto que tira o cliente da negativação) e alternativas: mais_barato, mais_folga, mais_rapido."""
+def montar_cenarios(tool_context: ToolContext, valor_extra: float = 0.0, parcela_alvo: float = 0.0) -> dict:
+    """PRINCIPAL: monta os cenários que cabem no mês (por prazo: 12x…60x), a partir do dinheiro extra disponível
+    (FGTS, 13º, restituição — ou 0) e respeitando a parcela máxima, o conforto do perfil e os respiros. Devolve o
+    recomendado e as alternativas rotuladas (mais_barato, mais_folga, mais_rapido). A cliente escolhe no card do app.
+    `parcela_alvo`: use quando ela pedir um valor de parcela ("menor que 600"): os cenários que atendem ganham o rótulo
+    atende_alvo e o melhor deles vira `recomendado_para_alvo`; se nenhum atende, `diagnostico_alvo` diz a menor parcela
+    possível e a entrada que faria caber — nunca prometa o que não está aqui."""
     c = _ctx(tool_context)
     if (faltando := _dados_insuficientes(c)):
         return faltando
     resposta = _montar_cenarios(c.perfil, c.capacidade, valor_extra=valor_extra, politica=c.politica)
+    if parcela_alvo and parcela_alvo > 0 and resposta.get("cenarios"):
+        from motor import pv
+
+        alvo = float(parcela_alvo)
+        atendem = [cen for cen in resposta["cenarios"] if cen["comprometimento_mensal"] <= alvo]
+        for cen in resposta["cenarios"]:
+            cen["atende_alvo"] = cen["comprometimento_mensal"] <= alvo
+            if cen["atende_alvo"] and "atende_alvo" not in cen["rotulos"]:
+                cen["rotulos"].append("atende_alvo")
+        resposta["parcela_alvo"] = alvo
+        if atendem:
+            melhor = min(atendem, key=lambda cen: cen["custo_total"])
+            resposta["recomendado_para_alvo"] = melhor["id"]
+            resposta["explicacao"] += f" Para uma parcela de até {alvo:.2f}, o melhor é o {melhor['id']}: {melhor['prazo_meses']}x de {melhor['comprometimento_mensal']:.2f}."
+        else:
+            menor = min(resposta["cenarios"], key=lambda cen: cen["comprometimento_mensal"])
+            i, n = c.politica["taxa_mensal_renegociacao"], c.politica["prazo_max"]
+            entrada = round(max(0.0, menor["saldo_consolidado"] - pv(alvo - menor["juros_mantidos_mes"], i, n)), 2) if alvo > menor["juros_mantidos_mes"] else None
+            resposta["recomendado_para_alvo"] = None
+            resposta["diagnostico_alvo"] = {"parcela_alvo": alvo, "menor_parcela_possivel": menor["comprometimento_mensal"], "cenario": menor["id"],
+                                            "prazo": menor["prazo_meses"], "entrada_necessaria": entrada, "prazo_max": n}
+            resposta["explicacao"] += (f" Nenhum cenário chega a {alvo:.2f}: a menor parcela possível é {menor['comprometimento_mensal']:.2f} em {menor['prazo_meses']}x ({menor['id']})"
+                                       + (f"; para chegar a {alvo:.2f} em {n}x seria preciso uma entrada de {entrada:.2f}." if entrada else "."))
     tool_context.state["cenarios"] = {cen["id"]: cen for cen in resposta.get("cenarios", [])}
+    resposta["numeros_permitidos"] = numeros_de(resposta)
     _ui(tool_context, "cenarios", resposta)
-    c.registrar_evento("cenarios_propostos", {"valor_extra": valor_extra, "recomendado": resposta.get("recomendado")})
+    c.registrar_evento("cenarios_propostos", {"valor_extra": valor_extra, "parcela_alvo": parcela_alvo, "recomendado": resposta.get("recomendado")})
     return resposta
 
 
@@ -291,26 +317,33 @@ def revogar_consentimento(tool_context: ToolContext) -> dict:
 
 # ---------- Acompanhamento ----------
 
+def fechar_por_cenario(c: Contexto, cen: dict) -> dict:
+    """Executa a contratação de um cenário (motor) e devolve a resposta padrão da tool — usada pela tool fechar_acordo
+    (HITL nativo do ADK) e pelo botão "Contratar" do app (confirmação deterministica), sempre DEPOIS do consentimento."""
+    pid = cen.get("id", "CENARIO")
+    acordo = criar_acordo_de_cenario(c.perfil, cen, c.hoje, c.politica)
+    c.salvar(acordo)
+    c.registrar_evento("acordo_fechado", {"cenario": pid, "parcela": acordo.parcela, "prazo": acordo.prazo,
+                                          "quitacoes": [q["nome"] for q in acordo.quitacoes]})
+    quit_txt = "; ".join(f"{q['nome']} quitado por {q['valor_pago']:.2f}" for q in acordo.quitacoes) or "nenhuma quitação"
+    comp_txt = "; ".join(f"{k['nome']} em {k['prazo']}x de {k['parcela']:.2f}" for k in acordo.componentes) or "nenhuma parcela"
+    resposta = {"ok": True, **acordo.to_dict(),
+                "explicacao": f"Acordo fechado. Quitações: {quit_txt}. Parcelas: {comp_txt}. Total por mês: {acordo.parcela:.2f}"
+                              f"{', primeira em ' + acordo.proximo_vencimento if acordo.proximo_vencimento else ''}, "
+                              f"com {acordo.respiros_max} respiro(s) por ano. Todas as dívidas do acordo saem do atraso."}
+    resposta["numeros_permitidos"] = numeros_de(resposta)
+    return resposta
+
+
 def fechar_acordo(tool_context: ToolContext, plano_id: str) -> dict:
-    """Fecha o acordo escolhido: um cenário de montar_cenarios (C1, C2, ...) ou um plano consolidado (A, B, C).
-    Exige consentimento registrado para 'fechar_acordo'."""
+    """Fecha o acordo escolhido pela cliente: o id de um cenário de montar_cenarios (C1, C2, ...). O app pede a
+    confirmação humana antes de executar (HITL); chame só depois de ela escolher com clareza."""
     c = _ctx(tool_context)
     pid = plano_id.strip().upper()
     cenarios = tool_context.state.get("cenarios") or {}
     if pid in cenarios:
-        cen = cenarios[pid]
         _consentimento_hitl(tool_context, "fechar_acordo")
-        acordo = criar_acordo_de_cenario(c.perfil, cen, c.hoje, c.politica)
-        c.salvar(acordo)
-        c.registrar_evento("acordo_fechado", {"cenario": pid, "parcela": acordo.parcela, "prazo": acordo.prazo,
-                                              "quitacoes": [q["nome"] for q in acordo.quitacoes]})
-        quit_txt = "; ".join(f"{q['nome']} quitado por {q['valor_pago']:.2f}" for q in acordo.quitacoes) or "nenhuma quitação"
-        comp_txt = "; ".join(f"{k['nome']} em {k['prazo']}x de {k['parcela']:.2f}" for k in acordo.componentes) or "nenhuma parcela"
-        resposta = {"ok": True, **acordo.to_dict(),
-                    "explicacao": f"Acordo fechado. Quitações: {quit_txt}. Parcelas: {comp_txt}. Total por mês: {acordo.parcela:.2f}"
-                                  f"{', primeira em ' + acordo.proximo_vencimento if acordo.proximo_vencimento else ''}, "
-                                  f"com {acordo.respiros_max} respiro(s) por ano. Todas as dívidas do acordo saem do atraso."}
-        resposta["numeros_permitidos"] = numeros_de(resposta)
+        resposta = fechar_por_cenario(c, cenarios[pid])
         _ui(tool_context, "acordo", resposta)
         return resposta
     planos = tool_context.state.get("planos") or {p["id"]: p for p in _simular(c.perfil, c.capacidade, c.politica)["planos"]}
@@ -421,7 +454,7 @@ amortizar_tool = FunctionTool(amortizar, require_confirmation=_amortizar_precisa
 ROTULOS_HITL = {"fechar_acordo": "Contratar o acordo", "acionar_respiro": "Usar um respiro", "amortizar": "Amortizar com o dinheiro extra"}
 
 TOOLS_DIAGNOSTICO = [get_perfil_financeiro, informar_renda, informar_gasto_fixo, calcular_capacidade, priorizar_dividas]
-TOOLS_NEGOCIADOR = [montar_cenarios, simular_planos, comparar_com_padrao]
+TOOLS_NEGOCIADOR = [montar_cenarios, comparar_com_padrao]   # simular_planos (A/B/C) saiu do agente: os cenários C1…Cn são a única lista de opções
 TOOLS_ACOMPANHAMENTO = [fechar_acordo_tool, status_acordo, acionar_respiro_tool, amortizar_tool, listar_gatilhos]
 TOOLS_ROOT = [registrar_consentimento, revogar_consentimento, escalar_humano]
 TOOLS_CONHECIMENTO = [consultar_conhecimento]

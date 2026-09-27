@@ -47,17 +47,38 @@ function Texto({ texto }: { texto: string }) {
   )
 }
 
+const ETAPAS = [
+  { id: 'entender', label: 'Entender' }, { id: 'opcoes', label: 'Opções' }, { id: 'escolher', label: 'Escolher' },
+  { id: 'confirmar', label: 'Confirmar no app' }, { id: 'acompanhar', label: 'Acompanhar' },
+] as const
+type Etapa = typeof ETAPAS[number]['id']
+/* Sequência do fluxo — só aparece depois que a cliente pede algo que a inicia; o passo humano (confirmar) fica evidente. */
+function Trilha({ etapa }: { etapa: Etapa }) {
+  const i = ETAPAS.findIndex((e) => e.id === etapa)
+  return (
+    <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-[#FBF6F1]/95 backdrop-blur">
+      <ol className="flex items-center gap-1 text-[10px] font-semibold">
+        {ETAPAS.map((e, j) => (
+          <li key={e.id} className="flex items-center gap-1">
+            <span className={`rounded-full px-2 py-1 ${j < i ? 'bg-ok-soft text-ok' : j === i ? (e.id === 'confirmar' ? 'bg-itau-orange text-white' : 'bg-itau-orange-soft text-itau-orange') : 'bg-mist text-ink-soft'}`}>{j < i ? '✓ ' : ''}{e.label}</span>
+            {j < ETAPAS.length - 1 && <span className="text-ink-soft/50">›</span>}
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
 type Item =
   | { k: 'cliente'; texto: string }
   | { k: 'zera'; texto: string; llm?: boolean }
   | { k: 'tools'; chips: Array<{ nome: string; ok?: boolean; erro?: string | null }> }
   | { k: 'card'; bloco: CardChat }
   | { k: 'hitl'; hitl: Hitl; resolvido?: 'sim' | 'nao' }
-  | { k: 'guardrail'; camada: string; tipo: string }
   | { k: 'sistema'; texto: string }
 
 /* ---------- cards do motor ---------- */
-function Card({ bloco, onEnviar }: { bloco: CardChat; onEnviar: (t: string) => void }) {
+function Card({ bloco, onContratar }: { bloco: CardChat; onContratar: (id: string) => void }) {
   const d = bloco.dados ?? {}
   const Linha = ({ k, v }: { k: string; v: string }) => <div className="flex items-center justify-between py-1.5 text-[13px] border-b border-line/60 last:border-0"><span className="text-ink-soft">{k}</span><span className="font-semibold text-right">{v}</span></div>
   const Titulo = ({ t }: { t: string }) => <div className="text-[12px] font-bold uppercase tracking-wide text-itau-orange mb-1">{t}</div>
@@ -86,17 +107,25 @@ function Card({ bloco, onEnviar }: { bloco: CardChat; onEnviar: (t: string) => v
         <div className="card p-3"><Titulo t="Ordem de ataque" />
           {(d.ordem ?? []).map((o: any) => <div key={o.divida_id} className="flex gap-2 py-1.5 text-[13px] border-b border-line/60 last:border-0"><span className="h-5 w-5 shrink-0 rounded-full bg-itau-orange-soft text-itau-orange grid place-items-center text-[11px] font-bold">{o.prioridade}</span><span><b>{o.nome}</b> — {o.motivo}</span></div>)}
         </div>)
-    case 'cenarios':
+    case 'cenarios': {
       if (d.nenhum_cenario_cabe) return <div className="card p-3 text-[13px]"><Titulo t="Nenhum cenário cabe" />{d.motivo}</div>
+      const melhorId: string | null = d.recomendado_para_alvo ?? d.recomendado ?? null
+      const lista: any[] = [...(d.cenarios ?? [])].sort((a, b) => (a.id === melhorId ? -1 : b.id === melhorId ? 1 : 0))
+      const ROT: Record<string, string> = { recomendado: 'recomendada', mais_barato: 'menor custo total', mais_rapido: 'termina antes', mais_folga: 'menor parcela', guardar_extra: 'guarda o extra', atende_alvo: `até ${brl0(d.parcela_alvo ?? 0)}` }
+      const diag = d.diagnostico_alvo
       return (
-        <div className="card p-3"><Titulo t="Cenários que cabem" />
-          <div className="space-y-2">{(d.cenarios ?? []).map((c: any) => (
-            <div key={c.id} className={`rounded-2xl border p-3 ${(c.rotulos ?? []).includes('recomendado') ? 'border-itau-orange bg-itau-orange-soft/40' : 'border-line'}`}>
-              <div className="flex items-center justify-between"><span className="text-[12px] font-bold">{c.id} · {(c.rotulos ?? []).join(', ').replace(/_/g, ' ')}</span><span className="text-[18px] font-extrabold">{brl(c.comprometimento_mensal)}<span className="text-[11px] font-medium text-ink-soft">/mês</span></span></div>
+        <div className="card p-3"><Titulo t={d.parcela_alvo ? `Opções para parcela até ${brl0(d.parcela_alvo)}` : 'Opções que cabem no seu mês'} />
+          {diag && <div className="mb-2 rounded-xl bg-itau-orange-soft/60 px-3 py-2 text-[12px]">Nenhuma opção chega a {brl0(diag.parcela_alvo)}. A menor parcela possível é <b>{brl(diag.menor_parcela_possivel)}</b> em {diag.prazo}x{diag.entrada_necessaria ? <> — para chegar a {brl0(diag.parcela_alvo)} em {diag.prazo_max}x seria preciso uma entrada de <b>{brl0(diag.entrada_necessaria)}</b></> : null}.</div>}
+          <div className="space-y-2">{lista.map((c: any) => { const melhor = c.id === melhorId; return (
+            <div key={c.id} className={`rounded-2xl border p-3 ${melhor ? 'border-itau-orange bg-itau-orange-soft/40' : 'border-line'}`}>
+              {melhor && <div className="text-[10px] font-bold uppercase tracking-wide text-itau-orange mb-1">{d.parcela_alvo ? 'Melhor para o que você pediu' : 'Melhor para você'}</div>}
+              <div className="flex items-center justify-between"><span className="text-[12px] font-bold">{c.id} · {(c.rotulos ?? []).map((r: string) => ROT[r] ?? r.replace(/_/g, ' ')).join(' · ')}</span><span className="text-[18px] font-extrabold">{brl(c.comprometimento_mensal)}<span className="text-[11px] font-medium text-ink-soft">/mês</span></span></div>
               <div className="text-[12px] text-ink-soft">{c.prazo_meses} meses · total {brl0(c.custo_total)} = saldo {brl0(c.saldo_original)} + juros {brl0(c.juros_acordo)}{c.entrada > 0 ? ` · entrada ${brl0(c.entrada)}` : ''}</div>
-              <button onClick={() => onEnviar(`quero fechar o cenário ${c.id}`)} className="mt-2 inline-flex items-center gap-1 text-[13px] font-bold text-itau-orange">Quero esta <ChevronRight className="h-4 w-4" /></button>
-            </div>))}</div>
+              <button onClick={() => onContratar(c.id)} className={`mt-2 inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-[13px] font-bold ${melhor ? 'bg-itau-orange text-white' : 'border border-itau-orange text-itau-orange'}`}>Contratar {c.id} <ChevronRight className="h-4 w-4" /></button>
+              <span className="ml-2 text-[10px] text-ink-soft">você confirma no próximo passo</span>
+            </div>) })}</div>
         </div>)
+    }
     case 'planos':
       return (
         <div className="card p-3"><Titulo t="Planos" />
@@ -128,7 +157,7 @@ function CardHitl({ hitl, resolvido, onDecidir }: { hitl: Hitl; resolvido?: 'sim
       <div className="mt-1 text-[17px] font-extrabold">{hitl.titulo}</div>
       {hitl.resumo && <div className="mt-1 text-[12px] text-ink-soft">{hitl.resumo}</div>}
       <div className="mt-2">{hitl.detalhes.map((d) => <div key={d.k} className="flex items-center justify-between py-1.5 text-[13px] border-b border-line/60 last:border-0"><span className="text-ink-soft">{d.k}</span><span className="font-semibold">{d.v}</span></div>)}</div>
-      <div className="mt-2 text-[11px] text-ink-soft">O agente pausou: nada é executado sem a sua confirmação aqui. Esta decisão fica registrada com data e hora.</div>
+      <div className="mt-2 text-[11px] text-ink-soft">Nada é executado sem a sua confirmação aqui — este é o seu passo. Esta decisão fica registrada com data e hora.</div>
       {resolvido ? <div className={`mt-3 chip ${resolvido === 'sim' ? 'bg-ok-soft text-ok' : 'bg-mist text-ink-soft'}`}>{resolvido === 'sim' ? <><Check className="h-3 w-3" /> Confirmado</> : <><X className="h-3 w-3" /> Não confirmado</>}</div> : (
         <div className="mt-3 flex gap-2">
           <button onClick={() => onDecidir(true)} className="btn-primary flex-1 py-3 rounded-full">{hitl.frase_sugerida}</button>
@@ -140,7 +169,7 @@ function CardHitl({ hitl, resolvido, onDecidir }: { hitl: Hitl; resolvido?: 'sim
 
 /* A conversa sobrevive à navegação (home <-> experiência guiada <-> chat): estado por cliente fica em memória do app e a
    sessão do ADK continua no backend — voltar para o chat retoma de onde parou, sem nova abertura. */
-const memoriaConversa = new Map<string, { sessao: string; itens: Item[]; sugestoes: string[]; protecoes: string[] }>()
+const memoriaConversa = new Map<string, { sessao: string; itens: Item[]; sugestoes: string[]; protecoes: string[]; etapa: Etapa | null }>()
 
 /* ---------- tela ---------- */
 export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { nome: string; onSair: () => void; onAbrirExperiencia: () => void; mensagemInicial?: string }) {
@@ -151,6 +180,7 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
   const [protecoes, setProtecoes] = useState<string[]>(salva?.protecoes ?? [])
   const [texto, setTexto] = useState('')
   const [ocupado, setOcupado] = useState(false)
+  const [etapa, setEtapa] = useState<Etapa | null>(salva?.etapa ?? null)
   const sessao = useRef(salva?.sessao ?? `chat-${Math.random().toString(36).slice(2, 8)}`)
   const fim = useRef<HTMLDivElement>(null)
   const inicialEnviada = useRef(false)
@@ -160,7 +190,7 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
     api.chatInicio(sessao.current).then((r) => { setItens([{ k: 'zera', texto: r.texto }]); setSugestoes(r.sugestoes); setProtecoes(r.protecoes) })
       .catch((e) => setItens([{ k: 'sistema', texto: e instanceof Error ? e.message : 'API indisponível' }]))
   }, [])
-  useEffect(() => { memoriaConversa.set(chave, { sessao: sessao.current, itens, sugestoes, protecoes }) }, [itens, sugestoes, protecoes])
+  useEffect(() => { memoriaConversa.set(chave, { sessao: sessao.current, itens, sugestoes, protecoes, etapa }) }, [itens, sugestoes, protecoes, etapa])
   useEffect(() => { fim.current?.scrollIntoView({ behavior: 'smooth' }) }, [itens, ocupado])
   useEffect(() => {                                     // veio da tela guiada com um texto digitado: manda como 1ª mensagem
     if (mensagemInicial && !inicialEnviada.current && !ocupado && (salva || itens.length > 0)) { inicialEnviada.current = true; void enviar(mensagemInicial) }
@@ -170,10 +200,11 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
   function tratar(e: EventoChat) {
     if (e.tipo === 'tool_call') setItens((l) => { const u = l[l.length - 1]; const chip = { nome: e.nome }; return u?.k === 'tools' ? [...l.slice(0, -1), { k: 'tools', chips: [...u.chips, chip] }] : [...l, { k: 'tools', chips: [chip] }] })
     else if (e.tipo === 'tool_result') setItens((l) => l.map((it) => it.k === 'tools' ? { ...it, chips: it.chips.map((c) => c.nome === e.nome && c.ok === undefined ? { ...c, ok: e.ok, erro: e.erro } : c) } : it))
-    else if (e.tipo === 'card') push({ k: 'card', bloco: e.bloco })
-    else if (e.tipo === 'texto') push({ k: 'zera', texto: e.texto, llm: true })
-    else if (e.tipo === 'hitl') push({ k: 'hitl', hitl: e.hitl })
-    else if (e.tipo === 'guardrail') push({ k: 'guardrail', camada: e.guardrail.camada, tipo: e.guardrail.tipo })
+    else if (e.tipo === 'card') { push({ k: 'card', bloco: e.bloco }); if (e.bloco.tipo === 'cenarios' && !e.bloco.dados?.nenhum_cenario_cabe) setEtapa('escolher'); if (e.bloco.tipo === 'acordo') setEtapa('acompanhar') }
+    else if (e.tipo === 'etapa') setEtapa((atual) => (e.etapa === 'entender' && atual && atual !== 'entender') ? atual : e.etapa)
+    else if (e.tipo === 'texto') push({ k: 'zera', texto: e.texto, llm: !e.roteado })
+    else if (e.tipo === 'hitl') { push({ k: 'hitl', hitl: e.hitl }); setEtapa('confirmar') }
+    else if (e.tipo === 'guardrail') { /* proteção aplicada no backend (registrada para observabilidade); a cliente vê só a resposta acolhedora */ }
     else if (e.tipo === 'erro') push({ k: 'sistema', texto: e.texto })
     else if (e.tipo === 'llm') { /* tokens/custo ficam só no backend (Cloud Trace / Logging / Monitoring) */ }
     else if (e.tipo === 'fim') setSugestoes(e.sugestoes)
@@ -182,6 +213,12 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
     if (ocupado || !msg.trim()) return
     push({ k: 'cliente', texto: msg }); setTexto(''); setOcupado(true)
     try { await api.chatStream(sessao.current, msg, tratar) } catch (e) { push({ k: 'sistema', texto: e instanceof Error ? e.message : 'falha' }) } finally { setOcupado(false) }
+  }
+  async function contratar(cenarioId: string) {
+    if (ocupado) return
+    setOcupado(true)
+    try { const r = await api.chatContratar(sessao.current, cenarioId); push({ k: 'hitl', hitl: r.hitl }); setEtapa('confirmar') }
+    catch (e) { push({ k: 'sistema', texto: e instanceof Error ? e.message : 'não consegui abrir a confirmação' }) } finally { setOcupado(false) }
   }
   async function decidir(idx: number, hitl: Hitl, ok: boolean) {
     if (ocupado) return
@@ -198,6 +235,7 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
         <button onClick={onAbrirExperiencia} className="text-[12px] font-bold text-itau-orange">Ver na tela</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
+        {etapa && <Trilha etapa={etapa} />}
         {protecoes.length > 0 && itens.length <= 1 && (
           <div className="rounded-2xl bg-itau-blue-soft/60 p-3 text-[12px] text-ink-soft"><div className="flex items-center gap-1 font-bold text-itau-blue"><ShieldCheck className="h-4 w-4" /> Como eu me protejo e te protejo</div><ul className="mt-1 space-y-0.5">{protecoes.map((p) => <li key={p}>· {p}</li>)}</ul></div>
         )}
@@ -207,9 +245,8 @@ export function Chat({ nome, onSair, onAbrirExperiencia, mensagemInicial }: { no
           if (it.k === 'tools') return <div key={i} className="flex flex-wrap gap-1.5">{it.chips.map((c, j) => c.erro === 'renda_desconhecida'
             ? <span key={j} className="chip text-[11px] bg-itau-orange-soft text-itau-orange"><Wrench className="h-3 w-3" /> {ROTULO_TOOL[c.nome] ?? c.nome}: preciso da sua renda</span>
             : <span key={j} className={`chip text-[11px] ${c.ok === false ? 'bg-danger-soft text-danger' : c.ok ? 'bg-ok-soft text-ok' : 'bg-mist text-ink-soft'}`}><Wrench className="h-3 w-3" /> {ROTULO_TOOL[c.nome] ?? c.nome}{c.ok === undefined ? '…' : c.ok ? ' ✓' : ' ✗'}</span>)}</div>
-          if (it.k === 'card') return <div key={i}><Card bloco={it.bloco} onEnviar={enviar} /></div>
+          if (it.k === 'card') return <div key={i}><Card bloco={it.bloco} onContratar={contratar} /></div>
           if (it.k === 'hitl') return <div key={i}><CardHitl hitl={it.hitl} resolvido={it.resolvido} onDecidir={(ok) => decidir(i, it.hitl, ok)} /></div>
-          if (it.k === 'guardrail') return <div key={i} className="flex items-center gap-2 rounded-xl bg-itau-blue-soft px-3 py-2 text-[12px] text-itau-blue"><ShieldCheck className="h-4 w-4" /> Guardrail de {it.camada}: <b>{it.tipo.replace(/_/g, ' ')}</b>{it.camada === 'entrada' && ' · modelo não foi chamado'}</div>
           return <div key={i} className="text-center text-[12px] text-danger">{it.texto}</div>
         })}
         {ocupado && <div className="flex items-center gap-2 text-[12px] text-ink-soft"><span className="h-3.5 w-3.5 rounded-full border-2 border-itau-orange border-t-transparent animate-spin" /> zera.ai está trabalhando…</div>}

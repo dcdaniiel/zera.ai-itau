@@ -290,12 +290,13 @@ def guardrail_entrada(callback_context: CallbackContext, llm_request: LlmRequest
         ultima = " ".join(p.text or "" for p in ultima_parts)
         state["ultima_mensagem_usuario"] = ultima
         state["turno_usuario"] = state.get("turno_usuario", 0) + 1
-        # autoriza somente números devolvidos por tools neste turno...
-        state["ultimos_numeros"] = []
-        # ...e os que a própria cliente digitou agora (renda, gasto): ecoá-los não é inventar
+        # números autorizados neste turno = os que as tools já devolveram NESTA sessão (a cliente pode perguntar "quais
+        # dívidas tenho?" e o modelo responder do contexto sem reconsultar) + os que ela própria digitou agora.
+        # Quando uma tool muda o estado (renda informada, acordo, respiro, amortização), os números antigos caducam
+        # (ver registrar_numeros) — aí o modelo precisa reconsultar.
         ditos = _numeros_ditos(ultima)
-        if ditos:
-            state["ultimos_numeros"] = sorted(ditos)[-600:]
+        state["numeros_ditos_turno"] = sorted(ditos)
+        state["ultimos_numeros"] = sorted(set(state.get("numeros_sessao") or []) | ditos)[-1200:]
 
     # 1) BLOQUEIO: fortes indícios de pergunta problemática -> resposta fixa, modelo não é chamado
     if ultima and novo_turno:
@@ -338,9 +339,14 @@ def guardrail_entrada(callback_context: CallbackContext, llm_request: LlmRequest
     gatilhos = ctx.estado.get("gatilhos_pendentes") or []
     if gatilhos:
         linhas = "; ".join(f"{g['tipo']}: {g['mensagem']}" for g in gatilhos)
-        instrucoes.append("GATILHO PENDENTE — você deve INICIAR a conversa explicando o que viu e propondo UMA ação, "
-                          "pedindo confirmação: " + linhas + ". Use as tools para citar números.")
+        instrucoes.append("GATILHO PENDENTE — no primeiro contato explique o que viu com os números desta mensagem (NÃO chame tools "
+                          "para isso), proponha UMA ação e pergunte se ela quer seguir: " + linhas + ". Só chame tools depois que ela pedir.")
         state["gatilho"] = gatilhos
+        # os números do gatilho vêm do motor: podem ser citados sem serem "inventados"
+        permitidos = set(state.get("ultimos_numeros") or [])
+        for g in gatilhos:
+            permitidos.update(float(v) for k, v in g.items() if isinstance(v, (int, float)) and not isinstance(v, bool))
+        state["ultimos_numeros"] = sorted(permitidos)[-600:]
     llm_request.append_instructions(instrucoes)
     return None
 
@@ -386,11 +392,21 @@ def exigir_consentimento(tool: BaseTool, args: dict[str, Any], tool_context: Too
     return None  # sem confirmação ainda: o ADK pausa e pede a confirmação humana; confirmada: executa
 
 
+MUTADORES_DE_ESTADO = {"informar_renda", "informar_gasto_fixo", "fechar_acordo", "acionar_respiro", "amortizar", "revogar_consentimento"}
+
+
 def registrar_numeros(tool: BaseTool, args: dict[str, Any], tool_context: ToolContext, tool_response: dict) -> dict | None:
-    permitidos = set(tool_context.state.get("ultimos_numeros") or [])
-    if isinstance(tool_response, dict):
-        permitidos.update(float(x) for x in tool_response.get("numeros_permitidos", []))
-    tool_context.state["ultimos_numeros"] = sorted(permitidos)[-600:]
+    novos = {float(x) for x in tool_response.get("numeros_permitidos", [])} if isinstance(tool_response, dict) else set()
+    sessao = set(tool_context.state.get("numeros_sessao") or [])
+    mudou_estado = tool.name in MUTADORES_DE_ESTADO and isinstance(tool_response, dict) and tool_response.get("ok", "erro" not in tool_response) \
+        and not (tool.name == "amortizar" and not args.get("aplicar"))
+    if mudou_estado:
+        sessao = set()   # capacidade/cenários anteriores caducaram: só valem os números devolvidos daqui em diante
+    sessao |= novos
+    tool_context.state["numeros_sessao"] = sorted(sessao)[-1500:]
+    ditos = set(tool_context.state.get("numeros_ditos_turno") or [])
+    permitidos = (set() if mudou_estado else set(tool_context.state.get("ultimos_numeros") or [])) | ditos | novos
+    tool_context.state["ultimos_numeros"] = sorted(permitidos)[-1200:]
     if tool.name in ACOES_COM_CONSENTIMENTO and isinstance(tool_response, dict) and tool_response.get("ok"):
         consentimentos = dict(tool_context.state.get("consentimento") or {})
         consentimentos.pop(tool.name, None)          # consentimento é de uso único
@@ -441,7 +457,9 @@ def guardrail_saida(callback_context: CallbackContext, llm_response: LlmResponse
     if alterado:
         _registrar_bloqueio(state, ctx, "saida", "pii_redigida", "")
 
-    # 3) números: todo R$ / % / prazo precisa existir nas respostas das tools
+    # 3) números: todo R$ / % / prazo precisa existir nas respostas das tools (ou ter sido dito pela cliente neste turno).
+    #    Se o modelo inventou um número, a cliente NÃO vê texto rasurado nem aviso técnico: recebe uma mensagem acolhedora
+    #    e o caminho para uma pessoa do time (o bloqueio fica registrado para observabilidade no backend).
     permitidos = [float(x) for x in (state.get("ultimos_numeros") or [])]
     achados = _valores_na_resposta(novo)
     estranhos = [v for grupo in ("dinheiro", "pct", "prazo") for v in achados[grupo] if not _permitido(v, permitidos)]
@@ -449,18 +467,17 @@ def guardrail_saida(callback_context: CallbackContext, llm_response: LlmResponse
         state["alucinacao_numerica"] = state.get("alucinacao_numerica", 0) + len(estranhos)
         _registrar_bloqueio(state, ctx, "saida", "numero_fora_das_tools", ", ".join(str(v) for v in estranhos[:5]))
         if os.getenv("ZERA_STRICT_NUMEROS", "1") == "1":
-            for m in list(PADRAO_DINHEIRO.finditer(novo))[::-1]:
-                if not _permitido(_para_float(m.group(1)), permitidos):
-                    novo = novo[:m.start()] + "[valor a confirmar]" + novo[m.end():]
-            for m in list(PADRAO_PCT.finditer(novo))[::-1]:
-                if not _permitido(_para_float(m.group(1)), permitidos):
-                    novo = novo[:m.start()] + "[percentual a confirmar]" + novo[m.end():]
-            for m in list(PADRAO_PRAZO.finditer(novo))[::-1]:
-                if not _permitido(float(m.group(1)), permitidos):
-                    novo = novo[:m.start()] + "[prazo a confirmar]" + novo[m.end():]
-            novo += "\n\n(Alguns valores acima precisam ser confirmados; vou verificar na calculadora antes de seguir.)"
-            alterado = True
+            state["escalar_sugerido"] = True
+            return _resposta_fixa(_resposta_numero_nao_confirmado(ctx))
     return _resposta_fixa(novo) if alterado else None
+
+
+def _resposta_numero_nao_confirmado(ctx: Contexto) -> str:
+    nome = (ctx.perfil.nome or "").split(" ")[0]
+    voc = f", {nome}" if nome and nome.lower() != "cliente" else ""
+    return (f"Quero ter certeza de cada número antes de te passar{voc}. Parte do que eu ia dizer não veio da calculadora do banco, "
+            "então prefiro não arriscar — os valores confirmados são os que estão nos cards acima.\n\n"
+            "1) Falar com uma pessoa do time, que confere isso com você\n2) Ver as opções calculadas (no card)\n3) Não fazer nada agora")
 
 
 # compatibilidade com nomes antigos

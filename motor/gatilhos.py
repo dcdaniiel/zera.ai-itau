@@ -30,15 +30,17 @@ def detectar_gatilhos(perfil: PerfilFinanceiro, acordo: Acordo | None, hoje: dat
     gatilhos: list[dict] = []
     sem_acordo = acordo is None or acordo.status != "ativo"
 
-    # 0) entrada no rotativo (só faz sentido sem acordo ativo)
+    # 0) entrada no rotativo (só faz sentido sem acordo ativo): cartão no rotativo OU cheque especial — crédito rotativo
+    #    sem prazo para acabar, juros correndo todo mês (o gatilho principal do quadro de produto)
     if sem_acordo:
-        for d in perfil.dividas:
-            if d.produto == "cartao_rotativo" and d.saldo > 0:
+        for d in sorted(perfil.dividas, key=lambda x: -x.custo_mensal):
+            if d.produto in ("cartao_rotativo", "cheque_especial") and d.saldo > 0 and d.taxa_mensal > 0:
                 ciclos = max(1, d.dias_atraso // 30) if d.dias_atraso else 1
+                nome = "Cartão entrou no rotativo" if d.produto == "cartao_rotativo" else "Conta entrou no cheque especial"
                 gatilhos.append({
                     "tipo": "entrada_rotativo", "data": hoje.isoformat(), "divida_id": d.divida_id, "produto": d.produto,
                     "saldo": d.saldo, "taxa_mensal": d.taxa_mensal, "ciclos": ciclos, "juros_mes": d.custo_mensal,
-                    "mensagem": (f"Cartão entrou no rotativo ({ciclos}º ciclo): {d.saldo:.2f} a {d.taxa_mensal*100:.0f}% a.m. "
+                    "mensagem": (f"{nome} ({ciclos}º ciclo): {d.saldo:.2f} a {d.taxa_mensal*100:.0f}% a.m. "
                                  f"custam {d.custo_mensal:.2f} por mês só de juros."),
                 })
                 break

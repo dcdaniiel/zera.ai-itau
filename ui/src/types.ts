@@ -91,7 +91,8 @@ export type EventoChat =
   | { tipo: 'tool_call'; nome: string; args: Record<string, unknown>; rotulo: string }
   | { tipo: 'tool_result'; nome: string; ok: boolean; erro?: string | null; explicacao: string }
   | { tipo: 'card'; bloco: CardChat }
-  | { tipo: 'texto'; texto: string }
+  | { tipo: 'texto'; texto: string; roteado?: boolean }
+  | { tipo: 'etapa'; etapa: 'entender' | 'opcoes' | 'escolher' | 'confirmar' | 'acompanhar' }
   | { tipo: 'llm'; tokens_entrada: number; tokens_saida: number; custo_usd: number }
   | { tipo: 'hitl'; hitl: Hitl }
   | { tipo: 'guardrail'; guardrail: { camada: string; tipo: string; trecho?: string } }
