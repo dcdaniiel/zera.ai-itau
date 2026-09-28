@@ -1,7 +1,7 @@
 # zera.ai — Documento explicativo da arquitetura
 
 **Entregável 5 da submissão** · Batalha de Agentes Itaú × Google (26–27/09/2026) · projeto GCP `batalha-time-03-vhxk`
-Complementa: [`arquitetura-c4.md`](arquitetura-c4.md) (diagramas C4, grafo do ADK, pipeline de dados) · [`arquitetura-c4-apresentacao.html`](arquitetura-c4-apresentacao.html) (níveis 1 e 2 para apresentar) · [`PRD-MVP.md`](PRD-MVP.md) · [`estrategia-dados.md`](estrategia-dados.md) · [`quadro-produto.md`](quadro-produto.md) · [`../infra/producao.md`](../infra/producao.md)
+Complementa: [`C4-Model.html`](C4-Model.html) (C4 níveis 1 e 2 desenhados, sequências, dados e decisões, para apresentar) · [`../README.md`](../README.md) (visão geral, decisões em uma linha, como rodar) · [`PRD-MVP.md`](PRD-MVP.md) · [`estrategia-dados.md`](estrategia-dados.md) · [`quadro-produto.md`](quadro-produto.md) · [`../infra/producao.md`](../infra/producao.md)
 
 ---
 
@@ -62,8 +62,8 @@ observabilidade (backend): OTel → Cloud Trace / Monitoring · logs JSON → Cl
 | **Observabilidade & FinOps** | `zera_agent/observabilidade.py` | OTel (spans do ADK + spans próprios) → Telemetry API; logs JSON; métricas p50/p95; tokens/custo por chamada e por jornada |
 
 Fora do serviço: **BigQuery** (dataset `zera`: extrato particionado, features, modelo k-means, clusters, perfis, dívidas derivadas, estado, eventos,
-telemetria), **Vertex AI** (Gemini + Model Armor) e **Cloud Trace / Monitoring / Logging / Billing Budgets**. Os diagramas estão em
-[`arquitetura-c4.md`](arquitetura-c4.md) §1–§2 e, em versão para apresentar, em [`arquitetura-c4-apresentacao.html`](arquitetura-c4-apresentacao.html).
+telemetria), **Vertex AI** (Gemini + Model Armor) e **Cloud Trace / Monitoring / Logging / Billing Budgets**. Os diagramas dos níveis 1 e 2, as sequências e o pipeline de dados estão desenhados em [`C4-Model.html`](C4-Model.html) e exportados em
+[`img/`](img/) (`c4-nivel1-contexto.png`, `c4-nivel2-containers.png`, `pipeline-dados.png`, `sequencia-*.png`).
 
 ---
 
