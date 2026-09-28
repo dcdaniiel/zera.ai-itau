@@ -395,7 +395,7 @@ Projeto vencedor da **Batalha de Agentes** (26 e 27 de setembro de 2026, CEIC It
 Google Cloud e Santo Digital —, construído em dois dias com a base real do evento.
 
 - Daniel Teixeira · [@dcdaniiel](https://github.com/dcdaniiel)
-- Yasmin
+- Yasmin Mendes · [@YasminMi](https://github.com/YasminMi)
 - Tathiana Scapolatieri
 - Jess Messias
 
